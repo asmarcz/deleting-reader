@@ -305,7 +305,6 @@ const LABELS = ["Full text", "Level 1", "Level 2", "Level 3", "Core"];
 const OPACITY = [1, 0.54, 0.37, 0.27, 0.18];
 const HINTS = {
   text: "Slide down to condense. Arrow keys work once the slider has focus.",
-  pdf: "Only body paragraphs are shortened. Titles, captions, figures and references stay as they are.",
 };
 const API = { text: "api/results", pdf: "api/papers" };
 
@@ -719,7 +718,7 @@ async function setTab(tab, id = null) {
   for (const b of document.querySelectorAll("[data-tab]")) b.setAttribute("aria-selected", String(b.dataset.tab === tab));
   $("content").className = tab;
   $("zoom").hidden = tab !== "pdf";
-  $("hint").textContent = HINTS[tab];
+  $("hint").textContent = HINTS[tab] ?? "";
   $("new").textContent = tab === "text" ? "New text" : "Upload PDF";
   $("text-form").hidden = tab !== "text";
   $("pdf-form").hidden = tab !== "pdf";
