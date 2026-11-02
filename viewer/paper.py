@@ -49,12 +49,10 @@ STOP_SECTIONS = re.compile(r"^(\d+\.?\s+)?(References|Bibliography|Acknowledg)",
 SKIP_SECTIONS = re.compile(r"^(CCS Concepts|Keywords)", re.I)
 
 
-def block_info(block):
-    """Text, dominant font size and bold share of a PyMuPDF dict block."""
+def _font_stats(lines):
+    """Dominant font size and bold share of some PyMuPDF dict lines."""
     sizes, bold, chars = [], 0, 0
-    for line in block["lines"]:
-        if line["dir"] != (1.0, 0.0):  # rotated text, e.g. the arXiv margin stamp
-            return None
+    for line in lines:
         for span in line["spans"]:
             n = len(span["text"].strip())
             sizes += [round(span["size"], 1)] * n
@@ -66,7 +64,17 @@ def block_info(block):
     return statistics.mode(sizes), bold / chars
 
 
-def extract(pdf_path):
+def block_info(block):
+    """(size, bold share) of a dict block, and of its first line alone."""
+    if any(line["dir"] != (1.0, 0.0) for line in block["lines"]):
+        return None  # rotated text, e.g. the arXiv margin stamp
+    whole = _font_stats(block["lines"])
+    if not whole:
+        return None
+    return whole, _font_stats(block["lines"][:1])
+
+
+def extract(pdf_path, name=None):
     """Body paragraphs grouped into sections, each word with its box(es).
 
     Returns (title, abstract_text, sections, stats); a section is
@@ -93,13 +101,22 @@ def extract(pdf_path):
             if bno not in info:
                 continue
             ws = sorted(by_block[bno])
-            size, bold = info[bno]
-            all_sizes += [size] * len(ws)
-            pages.append({"page": pno, "size": size, "bold": bold,
-                          "y": min(w[3][2] for w in ws), "height": page.rect.height,
-                          "words": ws})
+            (size, bold), first = info[bno]
+            parts = [(ws, size, bold)]
+            # Some PDFs (Typst, Word) put a heading in the same block as the
+            # paragraph under it; split such a first line off.
+            head = [w for w in ws if w[0] == 0]
+            if first and len(head) < len(ws) and (first[1] > 0.6 or first[0] > size + 0.5) \
+                    and len(head) <= 12 and HEADING.match(" ".join(w[2] for w in head)):
+                rest = [w for w in ws if w[0] != 0]
+                parts = [(head, *first), (rest, size, bold)]
+            for part, psize, pbold in parts:
+                all_sizes += [psize] * len(part)
+                pages.append({"page": pno, "size": psize, "bold": pbold,
+                              "y": min(w[3][2] for w in part), "height": page.rect.height,
+                              "words": part})
     body_size = statistics.mode(all_sizes)
-    title = doc.metadata.get("title") or os.path.basename(pdf_path)
+    title = doc.metadata.get("title") or os.path.splitext(name or os.path.basename(pdf_path))[0]
 
     sections, current, abstract, stats = [], None, [], {"skipped": 0}
     stopped = False
@@ -158,37 +175,35 @@ def extract(pdf_path):
     return title, " ".join(abstract), sections, stats
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("pdf")
-    ap.add_argument("--model", default="claude-sonnet-5-5")
-    ap.add_argument("--effort", default="medium")
-    ap.add_argument("--no-batch", action="store_true", help="send requests directly instead of as a batch")
-    ap.add_argument("--dry-run", action="store_true", help="only print the extracted structure")
-    args = ap.parse_args()
-
-    title, abstract, sections, stats = extract(args.pdf)
-    print(f"{title}\n{stats['paragraphs']} paragraphs, {stats['words']} words in {len(sections)} sections, "
-          f"{stats['skipped']} blocks skipped, body font {stats['body_size']} pt", file=sys.stderr)
-    for s in sections:
-        print(f"  [{s['heading'] or '(no heading)'}]", file=sys.stderr)
-        for p in s["paragraphs"]:
-            print(f"    {len(p['words']):4} words: {' '.join(p['words'][:12])} …", file=sys.stderr)
-    if args.dry_run:
-        return
-
-    with open(args.pdf, "rb") as f:
+def paper_id(pdf_path, model, effort):
+    """Id of a processed paper: same PDF, model, effort and prompt give the same id."""
+    with open(pdf_path, "rb") as f:
         pdf_hash = hashlib.sha256(f.read()).hexdigest()
-    batch = not args.no_batch
-    pid = hashlib.sha256(json.dumps(
-        [pdf_hash, args.model, args.effort, shorten.PROMPT_TEMPLATE]).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps(
+        [pdf_hash, model, effort, shorten.PROMPT_TEMPLATE]).encode()).hexdigest()[:16]
+
+
+def process(pdf_path, model="claude-sonnet-5-5", effort="medium", batch=True, name=None, progress=None):
+    """Extract, shorten and save a paper; returns its id. Reuses a finished result.
+
+    name is the original file name (for the title when the PDF has none);
+    progress, if given, is called with short status messages.
+    """
+    report = progress or (lambda msg: print(msg, file=sys.stderr))
+    pid = paper_id(pdf_path, model, effort)
     out_dir = os.path.join(PAPERS, pid)
     result_path = os.path.join(out_dir, "result.json")
     if os.path.exists(result_path):
-        print(f"already processed: {result_path}", file=sys.stderr)
-        return
+        report("already processed")
+        return pid
+
+    report("extracting text")
+    title, abstract, sections, stats = extract(pdf_path, name)
+    if not stats["paragraphs"]:
+        raise ValueError("no body paragraphs found in this PDF")
+    report(f"{stats['paragraphs']} paragraphs in {len(sections)} sections")
     os.makedirs(out_dir, exist_ok=True)
-    shutil.copyfile(args.pdf, os.path.join(out_dir, "paper.pdf"))
+    shutil.copyfile(pdf_path, os.path.join(out_dir, "paper.pdf"))
 
     doc_sections = []
     for s in sections:
@@ -197,7 +212,8 @@ def main():
         doc_sections.append({"paragraphs": [" ".join(p["words"]) for p in s["paragraphs"]],
                              "context": context or None})
 
-    client = shorten.make_client(model=args.model, effort=args.effort, batch=batch)
+    client = shorten.make_client(model=model, effort=effort, batch=batch)
+    client.progress = report
     start = time.time()
     results = shorten.shorten_document(doc_sections, title, client, state_dir=out_dir)
 
@@ -211,16 +227,39 @@ def main():
             paragraphs.append({"section": sec["heading"], "words": p["words"],
                                "boxes": p["boxes"], "depth": depth})
     record = {
-        "id": pid, "kind": "paper", "title": title, "source": os.path.basename(args.pdf),
-        "model": args.model, "effort": args.effort, "batch": batch,
+        "id": pid, "kind": "paper", "title": title, "source": name or os.path.basename(pdf_path),
+        "model": model, "effort": effort, "batch": batch,
         "created": time.time(), "seconds": round(time.time() - start, 1),
         "calls": client.calls, "input_tokens": client.prompt_tokens,
         "output_tokens": client.completion_tokens, "paragraphs": paragraphs,
     }
     with open(result_path, "w") as f:
         json.dump(record, f, ensure_ascii=False)
-    print(f"wrote {result_path}: {client.calls} requests, {client.prompt_tokens} in / "
-          f"{client.completion_tokens} out tokens, {record['seconds']} s", file=sys.stderr)
+    report(f"done: {client.calls} requests, {client.prompt_tokens} in / "
+           f"{client.completion_tokens} out tokens, {record['seconds']} s")
+    return pid
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("pdf")
+    ap.add_argument("--model", default="claude-sonnet-5-5")
+    ap.add_argument("--effort", default="medium")
+    ap.add_argument("--no-batch", action="store_true", help="send requests directly instead of as a batch")
+    ap.add_argument("--dry-run", action="store_true", help="only print the extracted structure")
+    args = ap.parse_args()
+
+    if args.dry_run:
+        title, _, sections, stats = extract(args.pdf)
+        print(f"{title}\n{stats['paragraphs']} paragraphs, {stats['words']} words in {len(sections)} sections, "
+              f"{stats['skipped']} blocks skipped, body font {stats['body_size']} pt")
+        for s in sections:
+            print(f"  [{s['heading'] or '(no heading)'}]")
+            for p in s["paragraphs"]:
+                print(f"    {len(p['words']):4} words: {' '.join(p['words'][:12])} …")
+        return
+    pid = process(args.pdf, args.model, args.effort, batch=not args.no_batch)
+    print(os.path.join(PAPERS, pid, "result.json"))
 
 
 if __name__ == "__main__":
