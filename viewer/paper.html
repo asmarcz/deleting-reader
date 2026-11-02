@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deleting Reader</title>
+<style>
+  :root {
+    --bg: #ecebe7;
+    --surface: #ffffff;
+    --ink: #1c1b19;
+    --muted: #6b6860;
+    --line: #d9d6cf;
+    --accent: #2f5d50;
+    --accent-ink: #ffffff;
+    --paper: #ffffff;
+    --danger: #a3361f;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121211;
+      --surface: #1f1e1b;
+      --ink: #ecebe6;
+      --muted: #9a978e;
+      --line: #34322d;
+      --accent: #8cc1ac;
+      --accent-ink: #10201a;
+      --danger: #f08a73;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  button, select { font: inherit; color: inherit; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 12rem; min-height: 100vh; }
+  .pages { padding: 1.5rem 1rem 4rem; overflow-x: auto; }
+  .page {
+    position: relative;
+    margin: 0 auto 1.25rem;
+    background: var(--paper);
+    box-shadow: 0 1px 3px rgb(0 0 0 / .15), 0 4px 16px rgb(0 0 0 / .06);
+  }
+  .page canvas { display: block; width: 100%; height: 100%; }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  /* Paper-coloured box over a word: partly opaque fades it, opaque removes it. */
+  .mask { position: absolute; background: var(--paper); opacity: 0; transition: opacity .25s ease; }
+  .fixes { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: #000; }
+  /* pdf.js text layer: invisible text placed over the glyphs, for selecting,
+     copying and find-in-page. Same rules as pdf.js's own viewer. */
+  .textLayer {
+    position: absolute; inset: 0; overflow: clip; opacity: 1; line-height: 1;
+    text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText;
+  }
+  .textLayer :is(span, br) {
+    color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%;
+  }
+  .textLayer ::selection { background: rgb(0 90 200 / .28); }
+  .textLayer br::selection { background: transparent; }
+  .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: -1; cursor: default; user-select: none; }
+  .textLayer.selecting .endOfContent { top: 0; }
+  .status { color: var(--muted); text-align: center; padding: 3rem 1rem; }
+  .status.error { color: var(--danger); }
+
+  .rail {
+    position: sticky; top: 0; height: 100vh;
+    padding: 1.5rem 1.25rem;
+    border-left: 1px solid var(--line);
+    background: var(--surface);
+    display: flex; flex-direction: column; gap: 1.25rem;
+  }
+  .rail h1 { font: 600 13px/1.35 system-ui, sans-serif; margin: 0; }
+  .meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .seg {
+    display: grid; grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--line); border-radius: 8px; padding: 3px; background: var(--bg);
+  }
+  .seg button {
+    border: 0; background: none; border-radius: 6px; padding: .35rem .25rem;
+    font-size: 13px; color: var(--muted); cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .slider { display: grid; grid-template-columns: auto 1fr; gap: .9rem; height: 16rem; }
+  .slider input[type="range"] {
+    writing-mode: vertical-lr; width: 1.5rem; height: 100%; margin: 0;
+    appearance: none; background: none; cursor: pointer;
+  }
+  .slider input[type="range"]::-moz-range-track {
+    width: 4px; height: 100%; border-radius: 2px;
+    background: linear-gradient(var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+  }
+  .slider input[type="range"]::-webkit-slider-runnable-track {
+    width: 4px; height: 100%; border-radius: 2px;
+    background: linear-gradient(var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+  }
+  .slider input[type="range"]::-moz-range-thumb {
+    width: 1.25rem; height: 1.25rem; border-radius: 50%;
+    background: var(--surface); border: 2px solid var(--accent); box-shadow: 0 1px 3px rgb(0 0 0 / .2);
+  }
+  .slider input[type="range"]::-webkit-slider-thumb {
+    appearance: none; margin-left: -8px; width: 1.25rem; height: 1.25rem; border-radius: 50%;
+    background: var(--surface); border: 2px solid var(--accent); box-shadow: 0 1px 3px rgb(0 0 0 / .2);
+  }
+  .slider input:focus-visible, .seg button:focus-visible, .zoom button:focus-visible, select:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 3px;
+  }
+  .ticks {
+    list-style: none; margin: 0; padding: .1rem 0;
+    display: flex; flex-direction: column; justify-content: space-between;
+    font-size: 13px; color: var(--muted);
+  }
+  .ticks li { cursor: pointer; line-height: 1.1; }
+  .ticks li.on { color: var(--ink); font-weight: 600; }
+  .ticks small { display: block; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .zoom { display: flex; gap: .4rem; align-items: center; }
+  .zoom button {
+    border: 1px solid var(--line); background: var(--bg); border-radius: 6px;
+    min-width: 2rem; height: 2rem; cursor: pointer;
+  }
+  .zoom output { min-width: 3.5rem; text-align: center; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .rail select {
+    width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); padding: .35rem;
+  }
+  .label { font-size: 12px; color: var(--muted); margin-bottom: .3rem; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: auto; }
+
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    .rail {
+      position: sticky; top: 0; height: auto; z-index: 2; order: -1;
+      border-left: 0; border-bottom: 1px solid var(--line); padding: .75rem 16px; gap: .5rem;
+    }
+    .rail h1, .meta, .hint, .ticks small, .papers { display: none; }
+    .slider { height: auto; grid-template-columns: 1fr; }
+    .slider input[type="range"] { writing-mode: horizontal-tb; width: 100%; height: 1.5rem; }
+    .slider input[type="range"]::-moz-range-track {
+      width: 100%; height: 4px;
+      background: linear-gradient(to right, var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+    }
+    .slider input[type="range"]::-webkit-slider-runnable-track {
+      width: 100%; height: 4px;
+      background: linear-gradient(to right, var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+    }
+    .slider input[type="range"]::-webkit-slider-thumb { margin-left: 0; margin-top: -8px; }
+    .ticks { flex-direction: row; }
+    .pages { padding: 1rem 0 3rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { .mask { transition: none; } }
+</style>
+</head>
+<body>
+<div class="layout">
+  <main class="pages" id="pages"><p class="status" id="status">Loading…</p></main>
+
+  <aside class="rail" aria-label="Reading level">
+    <div>
+      <h1 id="title">Deleting Reader</h1>
+      <div class="meta" id="meta"></div>
+    </div>
+    <div class="seg" role="group" aria-label="Display mode">
+      <button type="button" data-mode="grey" aria-pressed="true">Grey</button>
+      <button type="button" data-mode="remove" aria-pressed="false">Remove</button>
+    </div>
+    <div class="slider">
+      <input type="range" id="level" min="0" max="4" step="1" value="0" aria-label="Level" aria-valuetext="Full text">
+      <ol class="ticks" id="ticks"></ol>
+    </div>
+    <div class="zoom" role="group" aria-label="Page zoom">
+      <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+      <output id="zoom-value">100%</output>
+      <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+      <button type="button" id="zoom-fit">Fit</button>
+    </div>
+    <div class="papers">
+      <div class="label">Paper</div>
+      <select id="papers" aria-label="Paper"></select>
+    </div>
+    <p class="hint">Only body paragraphs are shortened. Titles, captions, figures and references stay as they are.<br><a href="/">Plain-text viewer</a></p>
+  </aside>
+</div>
+
+<script type="module">
+import * as pdfjs from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+
+const LEVELS = 4;
+const LABELS = ["Full text", "Level 1", "Level 2", "Level 3", "Core"];
+// Text opacity per number of levels below the cut, matching GP-TSM's greys.
+const OPACITY = [1, 0.54, 0.37, 0.27, 0.18];
+
+const $ = (id) => document.getElementById(id);
+let data = null, pdf = null, masks = [];
+let mode = "grey", level = 0, zoom = null;
+
+try {
+  const p = JSON.parse(localStorage.getItem("reader-paper") || "{}");
+  if (p.mode === "grey" || p.mode === "remove") mode = p.mode;
+  if (Number.isInteger(p.level) && p.level >= 0 && p.level <= LEVELS) level = p.level;
+} catch {}
+const save = () => { try { localStorage.setItem("reader-paper", JSON.stringify({ mode, level })); } catch {} };
+
+function share(k) {
+  let total = 0, kept = 0;
+  for (const p of data?.paragraphs ?? []) {
+    total += p.depth.length;
+    kept += p.depth.filter((d) => d >= k).length;
+  }
+  return total ? Math.round((100 * kept) / total) : null;
+}
+
+function renderTicks() {
+  $("ticks").innerHTML = "";
+  LABELS.forEach((label, k) => {
+    const li = document.createElement("li");
+    li.className = k === level ? "on" : "";
+    li.textContent = label;
+    const s = share(k);
+    if (s !== null) {
+      const sm = document.createElement("small");
+      sm.textContent = `${s}% of body words`;
+      li.append(sm);
+    }
+    li.addEventListener("click", () => setLevel(k));
+    $("ticks").append(li);
+  });
+}
+
+function applyLevel() {
+  // In remove mode a visible word may need a different form at this level:
+  // capitalised as a sentence's new first word, carrying the full stop of a
+  // removed ending, or without the comma of a removed aside (display_level).
+  const shown = mode === "remove"
+    ? data?.paragraphs.map((p) => new Map((p.display?.[level] ?? []).map(([i, t]) => [i, t])))
+    : null;
+  for (const { el, depth, pi, i, fix } of masks) {
+    let cover = 0;
+    if (depth < level) cover = mode === "remove" ? 1 : 1 - OPACITY[Math.min(level - depth, LEVELS)];
+    let replace = null;
+    if (shown && depth >= level && fix) {
+      const t = shown[pi].get(i);
+      if (t !== undefined && t !== data.paragraphs[pi].words[i]) replace = t;
+    }
+    if (replace !== null) cover = 1;
+    if (fix) showFix(fix, replace);
+    el.style.opacity = cover;
+  }
+}
+
+// Redrawn word: drawn in the PDF's own embedded font, which pdf.js has
+// registered under the text item's fontName, on the item's baseline, and
+// stretched so the original word would exactly fill its box.
+const measure = document.createElement("canvas").getContext("2d");
+const FALLBACK_FONT = '"Linux Libertine O", "Libertinus Serif", "Times New Roman", serif';
+
+function textItems(content, unit) {
+  // Text runs in page points with a top-left origin (the viewport handles the
+  // page box offset), with font and ascent.
+  return content.items.filter((it) => it.str && it.str.trim()).map((it) => {
+    const size = Math.hypot(it.transform[2], it.transform[3]);
+    const style = content.styles[it.fontName] ?? {};
+    const [x, baseline] = unit.convertToViewportPoint(it.transform[4], it.transform[5]);
+    return {
+      x0: x, x1: x + it.width, baseline, size,
+      font: it.fontName, ascent: style.ascent ?? 0.8,
+    };
+  });
+}
+
+// SVG text sits exactly on its baseline and textLength sets its width, so a
+// redrawn word lines up with the glyphs it covers. Coordinates are PDF points.
+const SVG = "http://www.w3.org/2000/svg";
+function fixLayer(div, unit) {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("class", "fixes");
+  svg.setAttribute("viewBox", `0 0 ${unit.width} ${unit.height}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+  div.append(svg);
+  return svg;
+}
+
+function makeFix(svg, b, word, items) {
+  const mid = (b[2] + b[4]) / 2;
+  const item = items.find((t) =>
+    t.x0 <= b[1] + 1 && t.x1 >= b[3] - 1 && t.baseline >= mid && t.baseline - t.size <= mid);
+  const size = item?.size ?? (b[4] - b[2]) * 0.75;
+  const family = item ? `"${item.font}", ${FALLBACK_FONT}` : FALLBACK_FONT;
+  const el = document.createElementNS(SVG, "text");
+  el.setAttribute("x", b[1]);
+  el.setAttribute("y", item ? item.baseline : b[4] - (b[4] - b[2]) * 0.22);
+  el.setAttribute("font-size", size);
+  el.setAttribute("lengthAdjust", "spacingAndGlyphs");
+  el.style.fontFamily = family;
+  el.style.display = "none";
+  svg.append(el);
+  // Width the original word has in this font, to scale the replacement by.
+  measure.font = `${size * 10}px ${family}`;
+  return { el, family, size, word, natural: measure.measureText(word).width / 10, width: b[3] - b[1] };
+}
+
+function showFix(fix, text) {
+  if (text === null) {
+    fix.el.style.display = "none";
+    return;
+  }
+  measure.font = `${fix.size * 10}px ${fix.family}`;
+  const ratio = fix.natural ? measure.measureText(text).width / 10 / fix.natural : 1;
+  fix.el.textContent = text;
+  fix.el.setAttribute("textLength", fix.width * ratio);
+  fix.el.style.display = "";
+}
+
+function setLevel(k) {
+  level = k;
+  $("level").value = k;
+  $("level").setAttribute("aria-valuetext", LABELS[k]);
+  applyLevel();
+  renderTicks();
+  save();
+}
+
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  applyLevel();
+  save();
+}
+
+async function renderPages() {
+  const box = $("pages");
+  box.innerHTML = "";
+  masks = [];
+  const first = await pdf.getPage(1);
+  const base = first.getViewport({ scale: 1 });
+  if (zoom === null) zoom = fitZoom(base.width);
+  $("zoom-value").textContent = `${Math.round(zoom * 100)}%`;
+
+  // Word boxes grouped by page; each box is [page, x0, y0, x1, y1] in PDF points.
+  const byPage = new Map();
+  data.paragraphs.forEach((p, pi) => {
+    p.boxes.forEach((boxes, i) => {
+      for (const b of boxes) {
+        if (!byPage.has(b[0])) byPage.set(b[0], []);
+        // Only single-box words get redrawn; hyphenated ones are left as they are.
+        byPage.get(b[0]).push({ b, depth: p.depth[i], pi, i, single: boxes.length === 1 });
+      }
+    });
+  });
+
+  for (let n = 1; n <= pdf.numPages; n++) {
+    const page = await pdf.getPage(n);
+    const vp = page.getViewport({ scale: zoom });
+    const unit = page.getViewport({ scale: 1 });
+    const div = document.createElement("div");
+    div.className = "page";
+    div.style.width = `${vp.width}px`;
+    div.style.height = `${vp.height}px`;
+    const canvas = document.createElement("canvas");
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.floor(vp.width * dpr);
+    canvas.height = Math.floor(vp.height * dpr);
+    div.append(canvas);
+
+    const overlay = document.createElement("div");
+    overlay.className = "overlay";
+    const pending = [];
+    for (const { b, depth, pi, i, single } of byPage.get(n - 1) ?? []) {
+      const m = document.createElement("div");
+      m.className = "mask";
+      // Percentages keep masks aligned with the canvas at any zoom. Word boxes
+      // stop short of descenders and comma tails, so pad them a little,
+      // mostly downwards.
+      const h = b[4] - b[2];
+      const x0 = b[1] - 0.3, x1 = b[3] + 0.3, y0 = b[2] - 0.04 * h, y1 = b[4] + 0.16 * h;
+      m.style.left = `${(x0 / unit.width) * 100}%`;
+      m.style.top = `${(y0 / unit.height) * 100}%`;
+      m.style.width = `${((x1 - x0) / unit.width) * 100}%`;
+      m.style.height = `${((y1 - y0) / unit.height) * 100}%`;
+      overlay.append(m);
+      const entry = { el: m, depth, pi, i, fix: null };
+      if (single) pending.push({ entry, b });
+      masks.push(entry);
+    }
+    div.append(overlay);
+
+    const text = document.createElement("div");
+    text.className = "textLayer";
+    // pdf.js sizes and places the text spans from these variables.
+    text.style.setProperty("--scale-factor", zoom);
+    text.style.setProperty("--total-scale-factor", zoom);
+    div.append(text);
+    box.append(div);
+
+    const rendered = page.render({ canvasContext: canvas.getContext("2d"), viewport: page.getViewport({ scale: zoom * dpr }) }).promise;
+    // Redrawn words need the page's fonts, which exist once the page is drawn.
+    Promise.all([rendered, page.getTextContent()]).then(([, content]) => {
+      const items = textItems(content, unit);
+      const svg = fixLayer(overlay, unit);
+      for (const { entry, b } of pending) {
+        entry.fix = makeFix(svg, b, data.paragraphs[entry.pi].words[entry.i], items);
+      }
+      applyLevel();
+    }).catch((e) => console.error("page", n, e));
+    const layer = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: text, viewport: vp });
+    layer.render().catch((e) => console.error("text layer:", e));
+    // Lets pdf.js keep the selection from jumping while dragging.
+    text.addEventListener("mousedown", () => text.classList.add("selecting"));
+    document.addEventListener("mouseup", () => text.classList.remove("selecting"));
+  }
+  applyLevel();
+}
+
+function fitZoom(width) {
+  const avail = $("pages").clientWidth - 32;
+  return Math.max(0.5, Math.min(3, avail / width));
+}
+
+async function open(id) {
+  $("pages").innerHTML = '<p class="status">Loading…</p>';
+  const r = await fetch(`/api/papers/${id}`);
+  if (!r.ok) {
+    $("pages").innerHTML = '<p class="status error">Couldn\'t load that paper.</p>';
+    return;
+  }
+  data = await r.json();
+  $("title").textContent = data.title;
+  document.title = `${data.title} – Deleting Reader`;
+  $("meta").textContent =
+    `${data.model}, effort ${data.effort}${data.batch ? ", batch" : ""}${data.variant ? `, ${data.variant}` : ""} · ${data.paragraphs.length} paragraphs · ` +
+    `${data.calls} requests · ${data.input_tokens} in / ${data.output_tokens} out tokens`;
+  pdf = await pdfjs.getDocument(`/api/papers/${id}/paper.pdf`).promise;
+  history.replaceState(null, "", `#${id}`);
+  renderTicks();
+  await renderPages();
+}
+
+async function init() {
+  const items = await (await fetch("/api/papers")).json();
+  const sel = $("papers");
+  for (const it of items) {
+    const o = document.createElement("option");
+    o.value = it.id;
+    o.textContent = `${it.title} — ${it.model} (${it.effort})${it.variant ? `, ${it.variant}` : ""}`;
+    sel.append(o);
+  }
+  if (!items.length) {
+    $("pages").innerHTML = '<p class="status">No processed papers yet. Run <code>uv run viewer/paper.py paper.pdf</code>.</p>';
+    return;
+  }
+  const id = location.hash.slice(1) || items[0].id;
+  sel.value = id;
+  await open(id);
+}
+
+const rezoom = (z) => { zoom = Math.max(0.5, Math.min(3, z)); if (pdf) renderPages(); };
+$("zoom-in").addEventListener("click", () => rezoom(zoom * 1.2));
+$("zoom-out").addEventListener("click", () => rezoom(zoom / 1.2));
+$("zoom-fit").addEventListener("click", async () => {
+  if (pdf) rezoom(fitZoom((await pdf.getPage(1)).getViewport({ scale: 1 }).width));
+});
+$("papers").addEventListener("change", (e) => { zoom = null; open(e.target.value); });
+$("level").addEventListener("input", (e) => setLevel(Number(e.target.value)));
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+$("level").value = level;
+setMode(mode);
+renderTicks();
+init().catch((e) => { $("pages").innerHTML = `<p class="status error">Couldn't load: ${e.message}</p>`; });
+</script>
+</body>
+</html>

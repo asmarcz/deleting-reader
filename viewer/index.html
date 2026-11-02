@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deleting Reader</title>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --surface: #ffffff;
+    --ink: #1c1b19;
+    --muted: #6b6860;
+    --line: #e4e1da;
+    --accent: #2f5d50;
+    --accent-ink: #ffffff;
+    --danger: #a3361f;
+    --radius: 10px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614;
+      --surface: #1f1e1b;
+      --ink: #ecebe6;
+      --muted: #9a978e;
+      --line: #34322d;
+      --accent: #8cc1ac;
+      --accent-ink: #10201a;
+      --danger: #f08a73;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+
+  .page {
+    display: grid;
+    grid-template-columns: minmax(0, 40rem) 11rem;
+    gap: 3rem;
+    justify-content: center;
+    padding: 2.5rem 1.5rem 6rem;
+  }
+
+  /* Input panel */
+  details.input {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    margin-bottom: 2.5rem;
+  }
+  details.input summary {
+    cursor: pointer;
+    padding: .75rem 1rem;
+    color: var(--muted);
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  details.input summary::-webkit-details-marker { display: none; }
+  details.input summary::after { content: "＋"; }
+  details.input[open] summary::after { content: "−"; }
+  .form { padding: 0 1rem 1rem; display: grid; gap: .75rem; }
+  .form label { display: grid; gap: .25rem; font-size: 13px; color: var(--muted); }
+  .form input, .form select, .form textarea {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: .5rem .65rem;
+  }
+  .form textarea { min-height: 12rem; resize: vertical; line-height: 1.5; }
+  .row { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
+  .row > label { flex: 1 1 9rem; }
+  .btn {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: 8px;
+    padding: .5rem .9rem;
+    cursor: pointer;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn:disabled { opacity: .6; cursor: progress; }
+  .btn:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .error { color: var(--danger); font-size: 14px; }
+
+  /* Reading column */
+  article h1 {
+    font: 600 2rem/1.2 Georgia, "Iowan Old Style", serif;
+    margin: 0 0 .4rem;
+    text-wrap: balance;
+  }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 2rem; font-variant-numeric: tabular-nums; }
+  .text p {
+    font: 1.15rem/1.7 Georgia, "Iowan Old Style", serif;
+    margin: 0 0 1.2em;
+    text-wrap: pretty;
+  }
+  .w { transition: opacity .25s ease; }
+  .w.gone { display: none; }
+  .empty { color: var(--muted); }
+
+  /* Level rail */
+  .rail {
+    position: sticky;
+    top: 2.5rem;
+    align-self: start;
+    display: grid;
+    gap: 1.5rem;
+  }
+  .mode {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 3px;
+  }
+  .mode button {
+    border: 0;
+    background: none;
+    border-radius: 6px;
+    padding: .35rem .25rem;
+    font-size: 13px;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .mode button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+
+  .slider { display: grid; grid-template-columns: auto 1fr; gap: .9rem; height: 17rem; }
+  .slider input[type="range"] {
+    writing-mode: vertical-lr;
+    direction: ltr;
+    width: 1.5rem;
+    height: 100%;
+    margin: 0;
+    appearance: none;
+    background: none;
+    cursor: pointer;
+  }
+  .slider input[type="range"]::-moz-range-track {
+    width: 4px; height: 100%; border-radius: 2px;
+    background: linear-gradient(var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+  }
+  .slider input[type="range"]::-webkit-slider-runnable-track {
+    width: 4px; height: 100%; border-radius: 2px;
+    background: linear-gradient(var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+  }
+  .slider input[type="range"]::-moz-range-thumb {
+    width: 1.25rem; height: 1.25rem; border-radius: 50%;
+    background: var(--surface); border: 2px solid var(--accent);
+    box-shadow: 0 1px 3px rgb(0 0 0 / .2);
+  }
+  .slider input[type="range"]::-webkit-slider-thumb {
+    appearance: none; margin-left: -8px;
+    width: 1.25rem; height: 1.25rem; border-radius: 50%;
+    background: var(--surface); border: 2px solid var(--accent);
+    box-shadow: 0 1px 3px rgb(0 0 0 / .2);
+  }
+  .slider input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+  .ticks {
+    list-style: none; margin: 0; padding: .1rem 0;
+    display: flex; flex-direction: column; justify-content: space-between;
+    font-size: 13px; color: var(--muted);
+  }
+  .ticks li { cursor: pointer; line-height: 1.1; }
+  .ticks li.on { color: var(--ink); font-weight: 600; }
+  .ticks small { display: block; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .hint { font-size: 12px; color: var(--muted); }
+
+  @media (max-width: 760px) {
+    .page { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; padding: 1.25rem 16px 5rem; }
+    .rail {
+      position: sticky; top: 0; z-index: 1; order: -1;
+      background: var(--bg); padding: .5rem 0; border-bottom: 1px solid var(--line);
+      grid-template-columns: 1fr; gap: .5rem;
+    }
+    .slider { height: auto; grid-template-columns: 1fr; }
+    .slider input[type="range"] { writing-mode: horizontal-tb; width: 100%; height: 1.5rem; }
+    .slider input[type="range"]::-moz-range-track {
+      width: 100%; height: 4px;
+      background: linear-gradient(to right, var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+    }
+    .slider input[type="range"]::-webkit-slider-runnable-track {
+      width: 100%; height: 4px;
+      background: linear-gradient(to right, var(--ink), color-mix(in srgb, var(--ink) 15%, transparent));
+    }
+    .slider input[type="range"]::-webkit-slider-thumb { margin-left: 0; margin-top: -8px; }
+    .ticks { flex-direction: row; }
+    .ticks small, .hint { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .w { transition: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <main>
+    <details class="input" id="input">
+      <summary>Process a new text</summary>
+      <form class="form" id="form">
+        <label>Title <input name="title" placeholder="Article title"></label>
+        <label>Text <textarea name="text" placeholder="Paste paragraphs separated by blank lines"></textarea></label>
+        <div class="row">
+          <label>Model
+            <select name="model">
+              <option value="claude-haiku-5-5">Claude Haiku 5.5</option>
+              <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
+              <option value="local">Local (GPTSM_BASE_URL)</option>
+            </select>
+          </label>
+          <label>Effort
+            <select name="effort">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <button class="btn primary" type="submit" id="run">Process</button>
+          <button class="btn" type="button" id="example">Load example</button>
+          <label style="flex: 2 1 12rem">Open a previous result
+            <select id="recent"><option value="">—</option></select>
+          </label>
+        </div>
+        <div class="error" id="error" role="alert"></div>
+      </form>
+    </details>
+
+    <article>
+      <h1 id="title">Deleting Reader</h1>
+      <div class="meta" id="meta"></div>
+      <div class="text" id="text"><p class="empty">Process a text or open a previous result above.</p></div>
+    </article>
+  </main>
+
+  <aside class="rail" aria-label="Reading level">
+    <div class="mode" role="group" aria-label="Display mode">
+      <button type="button" data-mode="grey" aria-pressed="true">Grey</button>
+      <button type="button" data-mode="remove" aria-pressed="false">Remove</button>
+    </div>
+    <div class="slider">
+      <input type="range" id="level" min="0" max="4" step="1" value="0" aria-label="Level"
+             aria-valuetext="Full text">
+      <ol class="ticks" id="ticks"></ol>
+    </div>
+    <p class="hint">Slide down to condense. Arrow keys work once the slider has focus.<br><a href="/paper">PDF papers</a></p>
+  </aside>
+</div>
+
+<script>
+const LEVELS = 4;
+const LABELS = ["Full text", "Level 1", "Level 2", "Level 3", "Core"];
+// GP-TSM's greys on white (#767676, #A0A0A0, #B9B9B9, #D0D0D0) as opacities,
+// so they work on a dark background too. Index = how many levels below the cut.
+const OPACITY = [1, 0.54, 0.37, 0.27, 0.18];
+
+const $ = (id) => document.getElementById(id);
+let data = null;
+let mode = "grey";
+let level = 0;
+
+function loadPrefs() {
+  try {
+    const p = JSON.parse(localStorage.getItem("reader-text") || "{}");
+    if (p.mode === "grey" || p.mode === "remove") mode = p.mode;
+    if (Number.isInteger(p.level) && p.level >= 0 && p.level <= LEVELS) level = p.level;
+  } catch {}
+}
+function savePrefs() {
+  try { localStorage.setItem("reader-text", JSON.stringify({ mode, level })); } catch {}
+}
+
+function wordShare(k) {
+  if (!data) return null;
+  let total = 0, kept = 0;
+  for (const p of data.paragraphs) {
+    total += p.depth.length;
+    kept += p.depth.filter((d) => d >= k).length;
+  }
+  return total ? Math.round((100 * kept) / total) : 0;
+}
+
+function renderTicks() {
+  $("ticks").innerHTML = "";
+  LABELS.forEach((label, k) => {
+    const li = document.createElement("li");
+    li.className = k === level ? "on" : "";
+    li.textContent = label;
+    const share = wordShare(k);
+    if (share !== null) {
+      const s = document.createElement("small");
+      s.textContent = `${share}% of words`;
+      li.append(s);
+    }
+    li.addEventListener("click", () => setLevel(k));
+    $("ticks").append(li);
+  });
+}
+
+function renderText() {
+  const box = $("text");
+  if (!data) return;
+  box.innerHTML = "";
+  for (const p of data.paragraphs) {
+    const el = document.createElement("p");
+    p.words.forEach((w, i) => {
+      const s = document.createElement("span");
+      s.className = "w";
+      s.dataset.i = i;
+      s.textContent = w;
+      el.append(s, " ");
+    });
+    box.append(el);
+  }
+  applyLevel();
+}
+
+function applyLevel() {
+  if (!data) return;
+  const paras = $("text").children;
+  data.paragraphs.forEach((p, n) => {
+    const shown = new Map((p.display[level] || []).map(([i, t]) => [i, t]));
+    for (const s of paras[n].children) {
+      const i = Number(s.dataset.i);
+      const d = p.depth[i];
+      if (mode === "grey") {
+        s.classList.remove("gone");
+        s.textContent = p.words[i];
+        s.style.opacity = d >= level ? 1 : OPACITY[Math.min(level - d, LEVELS)];
+      } else {
+        s.style.opacity = 1;
+        s.classList.toggle("gone", !shown.has(i));
+        s.textContent = shown.get(i) ?? p.words[i];
+      }
+    }
+  });
+}
+
+function update(fn) {
+  // Cross-fade remove-mode reflows where the browser supports it.
+  if (mode === "remove" && document.startViewTransition &&
+      !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.startViewTransition(fn);
+  } else {
+    fn();
+  }
+}
+
+function setLevel(k) {
+  level = k;
+  $("level").value = k;
+  $("level").setAttribute("aria-valuetext", LABELS[k]);
+  update(() => { applyLevel(); renderTicks(); });
+  savePrefs();
+}
+
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll(".mode button").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  update(applyLevel);
+  savePrefs();
+}
+
+function show(result) {
+  data = result;
+  $("title").textContent = result.title;
+  const cost = result.model === "claude-haiku-5-5"
+    ? ` · ≈ $${((result.input_tokens * 0.1 + result.output_tokens * 0.5) / 1e6).toFixed(4)}`
+    : "";
+  $("meta").textContent =
+    `${result.model}${result.effort ? `, effort ${result.effort}` : ""}${result.variant ? `, ${result.variant}` : ""} · ` +
+    `${result.paragraphs.length} paragraphs · ${result.calls} call${result.calls === 1 ? "" : "s"} · ` +
+    `${result.seconds} s · ${result.input_tokens} in / ${result.output_tokens} out tokens${cost}`;
+  document.title = `${result.title} – Deleting Reader`;
+  renderText();
+  renderTicks();
+  history.replaceState(null, "", `#${result.id}`);
+}
+
+async function loadRecent() {
+  const r = await fetch("/api/results");
+  const items = await r.json();
+  const sel = $("recent");
+  sel.length = 1;
+  for (const it of items) {
+    const o = document.createElement("option");
+    o.value = it.id;
+    o.textContent = `${it.title} — ${it.model}${it.effort ? ` (${it.effort})` : ""}${it.variant ? `, ${it.variant}` : ""}`;
+    sel.append(o);
+  }
+  return items;
+}
+
+async function open(id) {
+  const r = await fetch(`/api/results/${id}`);
+  if (r.ok) show(await r.json());
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  $("error").textContent = "";
+  $("run").disabled = true;
+  $("run").textContent = "Processing…";
+  try {
+    const r = await fetch("/api/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(f)),
+    });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    show(body);
+    $("input").open = false;
+    loadRecent();
+  } catch (err) {
+    $("error").textContent = `Couldn't process the text: ${err.message}`;
+  } finally {
+    $("run").disabled = false;
+    $("run").textContent = "Process";
+  }
+});
+
+$("example").addEventListener("click", async () => {
+  const text = await (await fetch("/example.txt")).text();
+  const [title, ...rest] = text.trim().split(/\n\s*\n/);
+  $("form").title.value = title.trim();
+  $("form").text.value = rest.join("\n\n");
+});
+
+$("recent").addEventListener("change", (e) => e.target.value && open(e.target.value));
+$("level").addEventListener("input", (e) => setLevel(Number(e.target.value)));
+document.querySelectorAll(".mode button").forEach((b) =>
+  b.addEventListener("click", () => setMode(b.dataset.mode)));
+
+loadPrefs();
+$("level").value = level;
+setMode(mode);
+renderTicks();
+loadRecent().then((items) => {
+  const id = location.hash.slice(1);
+  if (id) open(id);
+  else if (items.length) open(items[0].id);
+  else $("input").open = true;
+});
+</script>
+</body>
+</html>
