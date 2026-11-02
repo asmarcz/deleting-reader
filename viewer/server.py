@@ -13,14 +13,16 @@ with the less important words removed.
 """
 import glob
 import hashlib
+import hmac
 import json
 import os
 import re
 import sys
 import threading
 import time
+from datetime import timedelta
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, abort, jsonify, redirect, request, send_from_directory, session
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -37,6 +39,58 @@ _ID = shorten.ID_PATTERN
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+
+# Optional global password (READER_PASSWORD, e.g. in .env.local). The session
+# cookie is signed with a key derived from it, so changing the password logs
+# everyone out. Set READER_COOKIE_SECURE=1 when served over HTTPS.
+PASSWORD = os.getenv("READER_PASSWORD") or None
+app.secret_key = hashlib.sha256(f"deleting-reader:{PASSWORD}".encode()).digest() if PASSWORD else os.urandom(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("READER_COOKIE_SECURE") == "1",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+)
+if not PASSWORD:
+    print("READER_PASSWORD is not set: the app is open to anyone who can reach it", file=sys.stderr)
+
+
+@app.before_request
+def require_login():
+    if not PASSWORD or request.endpoint in ("login_page", "login") or session.get("auth"):
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "login required"}), 401
+    return redirect("/login")
+
+
+@app.get("/login")
+def login_page():
+    return send_from_directory(HERE, "login.html")
+
+
+@app.post("/login")
+def login():
+    after = request.form.get("next", "")
+    after = after if after.startswith("#") else ""  # only fragments: no redirects off-site
+    if PASSWORD and hmac.compare_digest(request.form.get("password", "").encode(), PASSWORD.encode()):
+        session.clear()
+        session.permanent = True
+        session["auth"] = True
+        return redirect("/" + after)
+    time.sleep(1)  # slows down guessing
+    return redirect(f"/login?error=1&next={after.replace('#', '%23')}")
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
+
+
+@app.get("/api/config")
+def config():
+    return jsonify({"auth": bool(PASSWORD)})
 
 # One lock per cache key, so a double submit waits for the first run's result
 # instead of paying for a second API call.
