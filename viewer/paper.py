@@ -229,12 +229,13 @@ def process(pdf_path, batch=True, name=None, progress=None):
             json.dump(draft, f, ensure_ascii=False)
 
     report("judging grammar and meaning")
-    verdicts = judge.judge_record(draft, batch=batch, state_dir=out_dir, progress=report)
+    verdicts, judged = judge.judge_record(draft, batch=batch, state_dir=out_dir, progress=report)
     report("repairing")
     paragraphs, log = repair.repair_paragraphs(draft["paragraphs"], verdicts)
     restored = sum(1 for entry in log if entry[2] == "restored")
     record = {**draft, "paragraphs": paragraphs, "judge_model": judge.MODEL, "judge_effort": judge.EFFORT,
-              "restored": restored, "seconds": round(time.time() - start, 1)}
+              "restored": restored, "seconds": round(time.time() - start, 1),
+              "usage": draft.get("usage", []) + ([judged] if judged else [])}
     with open(result_path, "w") as f:
         json.dump(record, f, ensure_ascii=False)
     report(f"done: {restored} dropped word runs restored, {record['seconds']} s")
@@ -261,7 +262,7 @@ def shorten_paper(pdf_path, pid, out_dir, batch, name, report):
     client = shorten.make_client(model=MODEL, effort=EFFORT, batch=batch)
     client.progress = report
     results = shorten.shorten_document(doc_sections, title, client, state_dir=out_dir)
-    ledger.add_client("shorten", title, client)
+    shortened = ledger.add_client("shorten", title, client)
 
     paragraphs = []
     for s, sec in zip(results, sections):
@@ -277,6 +278,7 @@ def shorten_paper(pdf_path, pid, out_dir, batch, name, report):
         "model": MODEL, "effort": EFFORT, "batch": batch, "created": time.time(),
         "calls": client.calls, "input_tokens": client.prompt_tokens,
         "output_tokens": client.completion_tokens, "paragraphs": paragraphs,
+        "usage": [shortened] if shortened else [],
     }
 
 

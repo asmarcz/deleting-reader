@@ -116,6 +116,7 @@ def with_display(record):
         p.pop("display", None)
         levels = [[i for i, d in enumerate(p["depth"]) if d >= k] for k in range(shorten.LEVELS + 1)]
         p["display"] = [shorten.display_level(p["words"], level) for level in levels]
+    record["total"] = ledger.record_total(record)
     return record
 
 
@@ -125,12 +126,6 @@ def summary(record):
     out["variant"] = record.get("variant")
     out["kind"] = record.get("kind")
     return out
-
-
-@app.get("/api/usage")
-def usage():
-    """Tokens and dollars spent so far, shortening and judging (viewer/ledger.py)."""
-    return jsonify(ledger.totals())
 
 
 def listing(paths):
@@ -209,12 +204,12 @@ def process_text():
         except Exception as e:  # show the reason in the page instead of a bare 500
             ledger.add_client("shorten", title, client)  # failed calls are paid for too
             return jsonify({"error": f"{type(e).__name__}: {e}"}), 502
-        ledger.add_client("shorten", title, client)
+        shortened = ledger.add_client("shorten", title, client)
         record = {
             "id": rid, "title": title, "model": model, "effort": effort,
             "created": time.time(), "seconds": round(time.time() - start, 1),
             "calls": client.calls, "input_tokens": client.prompt_tokens,
-            "output_tokens": client.completion_tokens,
+            "output_tokens": client.completion_tokens, "usage": [shortened] if shortened else [],
             "paragraphs": [{"words": p.split(), "depth": depths(r["levels"])}
                            for p, r in zip(paragraphs, out)],
         }

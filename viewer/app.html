@@ -264,7 +264,7 @@
     <div class="info">
       <h1 id="title">Deleting Reader</h1>
       <div class="meta" id="meta"></div>
-      <div class="meta" id="usage" title="Everything spent so far: shortening and judging, text and PDF"></div>
+      <div class="meta" id="usage" title="Spent on this result: shortening and judging"></div>
     </div>
     <div class="seg" role="group" aria-label="Display mode">
       <button type="button" data-view="grey" aria-pressed="true">Grey</button>
@@ -358,9 +358,9 @@ function renderInfo() {
   const d = state.data;
   $("title").textContent = d?.title ?? "Deleting Reader";
   document.title = d ? `${d.title} – Deleting Reader` : "Deleting Reader";
-  renderUsage();
   if (!d) {
     $("meta").textContent = "";
+    $("usage").textContent = "";
     return;
   }
   const parts = [
@@ -368,16 +368,9 @@ function renderInfo() {
     `${d.paragraphs.length} paragraphs`,
   ];
   $("meta").textContent = parts.join(" · ");
-}
-
-async function renderUsage() {
-  try {
-    const u = await (await fetch("api/usage")).json();
-    $("usage").textContent =
-      `Total: ${count(u.input_tokens)} in / ${count(u.output_tokens)} out tokens · ${dollars(u.cost)}`;
-  } catch {
-    $("usage").textContent = "";
-  }
+  const t = d.total;
+  $("usage").textContent =
+    `Total: ${count(t.input_tokens)} in / ${count(t.output_tokens)} out tokens · ${t.estimated ? "≈ " : ""}${dollars(t.cost)}`;
 }
 
 function setLevel(k) {

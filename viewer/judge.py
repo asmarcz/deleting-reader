@@ -124,11 +124,13 @@ def item_key(model, effort, prompt):
 
 
 def judge_record(record, model=MODEL, effort=EFFORT, batch=True, state_dir=None, progress=None):
-    """Verdict per paragraph of one result (None where the judge gave none).
+    """Verdict per paragraph of one result (None where the judge gave none),
+    and the usage entry of the calls made (None when all were cached).
 
     Verdicts already in the cache are reused; new ones are cached and their
     cost is written to the usage log.
     """
+    spent = None
     keys, todo = [], {}
     for original, versions in items(record):
         prompt = prompt_for(original, versions)
@@ -144,8 +146,8 @@ def judge_record(record, model=MODEL, effort=EFFORT, batch=True, state_dir=None,
         verdicts = client.complete_json_many(todo, system=SYSTEM, schema=SCHEMA,
                                              state_dir=state_dir or JUDGE_DIR)
         save(verdicts)
-        ledger.add_client("judge", record["title"], client)
-    return [load(key) for key in keys]
+        spent = ledger.add_client("judge", record["title"], client)
+    return [load(key) for key in keys], spent
 
 
 def save(verdicts):
