@@ -308,7 +308,7 @@ const HINTS = {
   text: "Slide down to condense. Arrow keys work once the slider has focus.",
   pdf: "Only body paragraphs are shortened. Titles, captions, figures and references stay as they are.",
 };
-const API = { text: "/api/results", pdf: "/api/papers" };
+const API = { text: "api/results", pdf: "api/papers" };
 
 const $ = (id) => document.getElementById(id);
 const state = { tab: "text", view: "grey", level: 0, data: null, pdf: null, zoom: null, masks: [] };
@@ -686,7 +686,7 @@ async function open(tab, id) {
   } else {
     $("content").innerHTML = '<p class="empty">Loading…</p>';
     state.zoom = null;
-    state.pdf = await pdfjs.getDocument(`/api/papers/${id}/paper.pdf`).promise;
+    state.pdf = await pdfjs.getDocument(`api/papers/${id}/paper.pdf`).promise;
     if (state.tab === "pdf" && state.data === data) await renderPdf();
   }
 }
@@ -759,7 +759,7 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 $("example").addEventListener("click", async () => {
-  const text = await (await fetch("/example.txt")).text();
+  const text = await (await fetch("example.txt")).text();
   const [title, ...rest] = text.trim().split(/\n\s*\n/);
   // form.title is the form's own title attribute, so go through elements.
   $("text-form").elements.title.value = title.trim();
@@ -772,7 +772,7 @@ $("text-form").addEventListener("submit", async (e) => {
   button.disabled = true;
   setStatus("Processing… (about 10–60 s)");
   try {
-    const r = await fetch("/api/results", {
+    const r = await fetch("api/results", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(Object.fromEntries(new FormData(e.target))),
@@ -800,7 +800,7 @@ $("pdf-form").addEventListener("submit", async (e) => {
   button.disabled = true;
   setStatus("Uploading…");
   try {
-    const r = await fetch("/api/papers", { method: "POST", body: form });
+    const r = await fetch("api/papers", { method: "POST", body: form });
     const body = await r.json();
     if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
     e.target.reset();
@@ -826,7 +826,7 @@ function watchJob(id) {
   if (watching.has(id)) return;
   watching.add(id);
   const tick = async () => {
-    const r = await fetch(`/api/jobs/${id}`);
+    const r = await fetch(`api/jobs/${id}`);
     const job = r.ok ? await r.json() : { state: "error", message: "job not found" };
     if (job.state === "running") {
       $("job").textContent = `${job.name ?? "PDF"}: ${job.message}`;
@@ -867,7 +867,7 @@ $("level").value = state.level;
 setView(state.view);
 const [tab, id] = location.hash.slice(1).split("/");
 setTab(tab === "pdf" ? "pdf" : "text", id || null);
-fetch("/api/jobs").then((r) => r.json()).then((jobs) => jobs.forEach((j) => watchJob(j.id)));
+fetch("api/jobs").then((r) => r.json()).then((jobs) => jobs.forEach((j) => watchJob(j.id)));
 </script>
 </body>
 </html>
