@@ -18,7 +18,7 @@ Then open http://127.0.0.1:5050. To require a password, add `READER_PASSWORD=...
 
 ## Example: a PDF paper
 
-In the PDF tab, click Upload PDF and choose a paper. With Batch on (half price) it takes a few minutes; you can keep reading meanwhile, and the paper opens when it's ready. Move the slider.
+In the PDF tab, click Upload PDF and choose a paper. Sonnet 5.5 shortens it, and an Opus 5.5 judge checks the result before a repair step. With Batch on (half price) it takes a few minutes; you can keep reading meanwhile, and the paper opens when it's ready. Move the slider.
 
 The same from the command line: `uv run viewer/paper.py ~/Downloads/paper.pdf`.
 
