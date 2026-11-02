@@ -16,6 +16,8 @@
     --accent-ink: #ffffff;
     --paper: #ffffff;
     --danger: #a3361f;
+    /* Grey mode: opacity of a word cut 1-4 levels above the current one. */
+    --fade-1: 0.54; --fade-2: 0.37; --fade-3: 0.27; --fade-4: 0.18;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
@@ -29,6 +31,10 @@
       --accent: #8cc1ac;
       --accent-ink: #10201a;
       --danger: #f08a73;
+      /* Light text on dark keeps more contrast at the same opacity. These
+         are halfway between the light-mode values and the ones that would
+         give each step light mode's exact contrast (0.43, 0.28, 0.20, 0.14). */
+      --fade-1: 0.49; --fade-2: 0.33; --fade-3: 0.24; --fade-4: 0.16;
       color-scheme: dark;
     }
   }
@@ -300,8 +306,10 @@ window.fetch = async (...args) => {
 
 const LEVELS = 4;
 const LABELS = ["Full text", "Level 1", "Level 2", "Level 3", "Core"];
-// Text opacity per number of levels below the cut: GP-TSM's greys on white
-// (#767676, #A0A0A0, #B9B9B9, #D0D0D0) as opacities, so they work in dark mode too.
+// PDF masks: how much of a word to cover per number of levels below the cut,
+// as 1 minus these. GP-TSM's greys on white (#767676, #A0A0A0, #B9B9B9,
+// #D0D0D0). Pages stay white in dark mode, so these are the light-mode
+// values; text mode reads --fade-1…4, which change with the theme.
 const OPACITY = [1, 0.54, 0.37, 0.27, 0.18];
 const HINTS = {
   text: "Slide down to condense. Arrow keys work once the slider has focus.",
@@ -423,7 +431,7 @@ function applyText() {
       if (state.view === "grey") {
         s.classList.remove("gone");
         s.textContent = p.words[i];
-        s.style.opacity = d >= state.level ? 1 : OPACITY[Math.min(state.level - d, LEVELS)];
+        s.style.opacity = d >= state.level ? 1 : `var(--fade-${Math.min(state.level - d, LEVELS)})`;
       } else {
         s.style.opacity = 1;
         s.classList.toggle("gone", !shown.has(i));
