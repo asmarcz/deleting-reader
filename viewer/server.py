@@ -115,7 +115,13 @@ def with_display(record):
         p.pop("display", None)
         levels = [[i for i, d in enumerate(p["depth"]) if d >= k] for k in range(shorten.LEVELS + 1)]
         p["display"] = [shorten.display_level(p["words"], level) for level in levels]
+    record["cost"] = run_cost(record)
     return record
+
+
+def run_cost(record):
+    return shorten.cost(record["model"], record.get("input_tokens", 0),
+                        record.get("output_tokens", 0), record.get("batch", False))
 
 
 def summary(record):
@@ -123,6 +129,27 @@ def summary(record):
     out = {k: record[k] for k in ("id", "title", "model", "effort", "created")}
     out["variant"] = record.get("variant")
     return out
+
+
+@app.get("/api/usage")
+def usage():
+    """Tokens and dollars over every stored run, text and PDF.
+
+    Repaired copies are skipped: they keep the original run's counts but made
+    no calls of their own. Judge calls are not recorded, so not included.
+    """
+    paths = glob.glob(os.path.join(CACHE, "*.json")) + glob.glob(os.path.join(PAPERS, "*", "result.json"))
+    total = {"runs": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0}
+    for path in paths:
+        with open(path) as f:
+            record = json.load(f)
+        if record.get("variant"):
+            continue
+        total["runs"] += 1
+        total["input_tokens"] += record.get("input_tokens", 0)
+        total["output_tokens"] += record.get("output_tokens", 0)
+        total["cost"] += run_cost(record) or 0.0
+    return jsonify(total)
 
 
 def listing(paths):

@@ -84,6 +84,23 @@ def _log(msg):
 
 ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,120}")
 
+# US dollars per million input and output tokens. Batches cost half.
+# Haiku's price is for prompts up to 100K tokens, which ours always are.
+PRICES = {
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+}
+
+
+def cost(model, input_tokens, output_tokens, batch=False):
+    """Price of a run in dollars, or None for a model without a known price."""
+    if model not in PRICES:
+        return None
+    price_in, price_out = PRICES[model]
+    dollars = (input_tokens * price_in + output_tokens * price_out) / 1e6
+    return dollars / 2 if batch else dollars
+
 
 def slugify(text, limit=48):
     """Lowercase ASCII words joined by hyphens, cut at a word boundary."""

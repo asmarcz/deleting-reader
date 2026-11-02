@@ -278,6 +278,7 @@
     <div class="info">
       <h1 id="title">Deleting Reader</h1>
       <div class="meta" id="meta"></div>
+      <div class="meta" id="usage" title="All stored runs, text and PDF. Judge calls and repaired copies are not counted."></div>
     </div>
     <div class="seg" role="group" aria-label="Display mode">
       <button type="button" data-view="grey" aria-pressed="true">Grey</button>
@@ -364,10 +365,14 @@ function renderTicks() {
   });
 }
 
+const count = (n) => n.toLocaleString("en-US");
+const dollars = (x) => (x == null ? "price unknown" : `$${x < 0.01 && x > 0 ? x.toFixed(4) : x.toFixed(2)}`);
+
 function renderInfo() {
   const d = state.data;
   $("title").textContent = d?.title ?? "Deleting Reader";
   document.title = d ? `${d.title} – Deleting Reader` : "Deleting Reader";
+  renderUsage();
   if (!d) {
     $("meta").textContent = "";
     return;
@@ -376,9 +381,21 @@ function renderInfo() {
     `${d.model}${d.effort ? `, ${d.effort}` : ""}${d.batch ? ", batch" : ""}${d.variant ? `, ${d.variant}` : ""}`,
     `${d.paragraphs.length} paragraphs`,
     `${d.calls} request${d.calls === 1 ? "" : "s"}`,
-    `${d.input_tokens} in / ${d.output_tokens} out tokens`,
+    `${count(d.input_tokens)} in / ${count(d.output_tokens)} out tokens`,
+    // A repaired copy made no calls; the numbers are its original run's.
+    d.variant ? `${dollars(d.cost)} (original run)` : dollars(d.cost),
   ];
   $("meta").textContent = parts.join(" · ");
+}
+
+async function renderUsage() {
+  try {
+    const u = await (await fetch("api/usage")).json();
+    $("usage").textContent =
+      `All runs: ${u.runs} · ${count(u.input_tokens)} in / ${count(u.output_tokens)} out tokens · ${dollars(u.cost)}`;
+  } catch {
+    $("usage").textContent = "";
+  }
 }
 
 function setLevel(k) {
