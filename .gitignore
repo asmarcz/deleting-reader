@@ -2,3 +2,4 @@ __pycache__/
 .env.local
 viewer/cache/
 viewer/papers/
+viewer/uploads/
