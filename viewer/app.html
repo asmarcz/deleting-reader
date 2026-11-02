@@ -705,6 +705,8 @@ async function loadPicker(tab) {
     o.textContent = it.kind === "paper" ? it.title : `${it.title} — ${it.model.replace("claude-", "")}${it.effort ? ` ${it.effort}` : ""}${it.variant ? `, ${it.variant}` : ""}`;
     sel.append(o);
   }
+  // A rebuilt list would show its first (newest) entry; keep showing the one on screen.
+  if (state.data && items.some((it) => it.id === state.data.id)) sel.value = state.data.id;
   sel.hidden = !items.length;
   return items;
 }
