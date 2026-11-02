@@ -85,6 +85,10 @@ class Client:
     """Minimal OpenAI-compatible chat client that counts calls and tokens."""
 
     batch = False
+    progress = None  # optional callable for status messages, e.g. from the web server
+
+    def _report(self, msg):
+        (self.progress or _log)(msg)
 
     def __init__(self, base_url=None, model=None, api_key=None, temperature=0.2):
         self.base_url = (base_url or os.getenv("READER_BASE_URL", "https://api.openai.com/v1")).rstrip("/")
@@ -200,7 +204,7 @@ class AnthropicClient(Client):
         if state and os.path.exists(state):
             with open(state) as f:
                 batch_id = json.load(f)["batch_id"]
-            _log(f"resuming batch {batch_id}")
+            self._report(f"resuming batch {batch_id}")
         if not batch_id:
             batch = self._client.messages.batches.create(requests=[
                 Request(custom_id=cid, params=MessageCreateParamsNonStreaming(
@@ -211,7 +215,7 @@ class AnthropicClient(Client):
             if state:
                 with open(state, "w") as f:
                     json.dump({"batch_id": batch_id, "created": time.time()}, f)
-            _log(f"submitted batch {batch_id} with {len(ids)} requests")
+            self._report(f"submitted batch with {len(ids)} requests")
 
         start = time.time()
         while True:
@@ -219,8 +223,8 @@ class AnthropicClient(Client):
             if b.processing_status == "ended":
                 break
             c = b.request_counts
-            _log(f"batch {batch_id}: {b.processing_status}, {c.processing} processing, "
-                 f"{c.succeeded} done, {time.time() - start:.0f} s")
+            self._report(f"batch {b.processing_status.replace('_', ' ')}: {c.succeeded} of {len(ids)} requests done, "
+                         f"{time.time() - start:.0f} s")
             time.sleep(poll)
 
         out = {}
@@ -410,7 +414,7 @@ def shorten_document(sections, title=None, client=None, state_dir=None):
 
     missing = [k for k, v in found.items() if not v]
     if missing:
-        _log(f"retrying {len(missing)} paragraphs directly")
+        client._report(f"retrying {len(missing)} paragraphs directly")
     for s, i in missing:
         section = sections[s]
         prompt = _prompt(section["paragraphs"], [i], title, "one paragraph of an article", section.get("context"))
