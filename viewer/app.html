@@ -294,7 +294,7 @@
       <button type="button" id="zoom-fit">Fit</button>
     </div>
     <p class="hint" id="hint"></p>
-    <form method="post" action="/logout" id="logout" hidden><button class="btn" type="submit">Log out</button></form>
+    <form method="post" action="logout" id="logout" hidden><button class="btn" type="submit">Log out</button></form>
   </aside>
 </div>
 
@@ -307,7 +307,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4
 const rawFetch = window.fetch.bind(window);
 window.fetch = async (...args) => {
   const r = await rawFetch(...args);
-  if (r.status === 401) location.href = `/login?next=${encodeURIComponent(location.hash)}`;
+  if (r.status === 401) location.href = `login?next=${encodeURIComponent(location.hash)}`;
   return r;
 };
 

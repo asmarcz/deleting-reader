@@ -61,7 +61,7 @@ def require_login():
         return None
     if request.path.startswith("/api/"):
         return jsonify({"error": "login required"}), 401
-    return redirect("/login")
+    return redirect("login")  # relative, so it keeps a proxy's path prefix
 
 
 @app.get("/login")
@@ -77,15 +77,15 @@ def login():
         session.clear()
         session.permanent = True
         session["auth"] = True
-        return redirect("/" + after)
+        return redirect("./" + after)
     time.sleep(1)  # slows down guessing
-    return redirect(f"/login?error=1&next={after.replace('#', '%23')}")
+    return redirect(f"login?error=1&next={after.replace('#', '%23')}")
 
 
 @app.post("/logout")
 def logout():
     session.clear()
-    return redirect("/login")
+    return redirect("login")
 
 
 @app.get("/api/config")
