@@ -888,6 +888,14 @@ function notify(title, body) {
 
 $("picker").addEventListener("change", (e) => open(state.tab, e.target.value));
 $("level").addEventListener("input", (e) => setLevel(Number(e.target.value)));
+// The slider runs top to bottom, but browsers raise a range's value on
+// ArrowUp. Make Down go down the slider, towards the core text.
+$("level").addEventListener("keydown", (e) => {
+  const step = { ArrowDown: 1, ArrowUp: -1 }[e.key];
+  if (!step) return;
+  e.preventDefault();
+  setLevel(Math.min(LEVELS, Math.max(0, state.level + step)));
+});
 document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
 document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
   if (b.dataset.tab !== state.tab) setTab(b.dataset.tab);
