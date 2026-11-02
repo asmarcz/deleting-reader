@@ -14,7 +14,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 uv run viewer/server.py
 ```
 
-Then open http://127.0.0.1:5050. In the Text tab, click New text, then Load example and Process.
+Then open http://127.0.0.1:5050. To require a password, add `READER_PASSWORD=...` to `.env.local` (and `READER_COOKIE_SECURE=1` when served over HTTPS). In the Text tab, click New text, then Load example and Process.
 
 ## Example: a PDF paper
 
