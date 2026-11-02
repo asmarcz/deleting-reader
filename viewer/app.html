@@ -462,13 +462,42 @@ function textItems(content, unit) {
 // embedded font (pdf.js registers it under the item's fontName) on the item's
 // baseline. Redrawing whole words in that font can pick wrong glyphs, because
 // pdf.js re-encodes embedded fonts (a ligature turned "flights" into "ftlights").
-function makeFix(svg, b, word, items) {
+// The pdf.js text run a word box lies in, or else the run on the same line
+// that overlaps it most (a word can span runs, e.g. when part is italic).
+function itemFor(b, items) {
   const mid = (b[2] + b[4]) / 2;
-  const item = items.find((t) => t.x0 <= b[1] + 1 && t.x1 >= b[3] - 1 && t.baseline >= mid && t.baseline - t.size <= mid);
+  const line = items.filter((t) => t.baseline >= mid && t.baseline - t.size <= mid);
+  const inside = line.find((t) => t.x0 <= b[1] + 1 && t.x1 >= b[3] - 1);
+  if (inside) return inside;
+  let best = null, most = 0;
+  for (const t of line) {
+    const overlap = Math.min(t.x1, b[3]) - Math.max(t.x0, b[1]);
+    if (overlap > most) [best, most] = [t, overlap];
+  }
+  return best;
+}
+
+// Top and bottom a cover must reach for a word, in page points. Word boxes
+// come from the font's ascender and descender, which some fonts misreport
+// (Linux Libertine says its descender is 0, so boxes end at the baseline and
+// the tails of g, p, y stay visible). The run's baseline and size give the
+// real extent: accents up to 0.8 em above, descenders to 0.26 em below.
+function extent(b, item) {
+  const h = b[4] - b[2];
+  let top = b[2] - 0.04 * h, bottom = b[4] + 0.16 * h;
+  if (item) {
+    top = Math.min(top, item.baseline - 0.8 * item.size);
+    bottom = Math.max(bottom, item.baseline + 0.26 * item.size);
+  }
+  return [top, bottom];
+}
+
+function makeFix(svg, b, word, items) {
+  const item = itemFor(b, items);
   const g = document.createElementNS(SVG, "g");
   svg.append(g);
   return {
-    g, b, word,
+    g, b, word, extent: extent(b, item),
     size: item?.size ?? (b[4] - b[2]) * 0.75,
     family: item ? `"${item.font}", ${FALLBACK_FONT}` : FALLBACK_FONT,
     baseline: item ? item.baseline : b[4] - (b[4] - b[2]) * 0.22,
@@ -489,21 +518,23 @@ function partWidth(fix, part) {
 }
 
 function coverPart(fix, x0, x1) {
-  const h = fix.b[4] - fix.b[2];
+  const [top, bottom] = fix.extent;
   const r = document.createElementNS(SVG, "rect");
   r.setAttribute("x", x0);
-  r.setAttribute("y", fix.b[2] - 0.04 * h);
+  r.setAttribute("y", top);
   r.setAttribute("width", Math.max(0, x1 - x0));
-  r.setAttribute("height", 1.2 * h);
+  r.setAttribute("height", bottom - top);
   r.setAttribute("class", "cover");
   fix.g.append(r);
 }
 
-function draw(fix, x, text) {
+// anchor "end" puts the text's right edge at x.
+function draw(fix, x, text, anchor = "start") {
   const t = document.createElementNS(SVG, "text");
   t.setAttribute("x", x);
   t.setAttribute("y", fix.baseline);
   t.setAttribute("font-size", fix.size);
+  t.setAttribute("text-anchor", anchor);
   t.style.fontFamily = fix.family;
   t.textContent = text;
   fix.g.append(t);
@@ -523,10 +554,13 @@ function showFix(fix, text) {
     return true;
   }
   if (recased) {
-    // A changed first letter, drawn over its own position.
+    // A changed first letter. A capital is wider than its small letter, so
+    // it ends where the old letter ended and grows to the left, into the
+    // space the cut words before it left free; the gap to the next letter
+    // stays as printed.
     const w = partWidth(fix, oldBody[0]);
     coverPart(fix, fix.b[1] - 0.2, fix.b[1] + w);
-    draw(fix, fix.b[1], newBody[0]);
+    draw(fix, fix.b[1] + w, newBody[0], "end");
   }
   if (newTail !== oldTail) {
     // Swap trailing punctuation: cover the old marks, draw the new ones.
@@ -582,20 +616,24 @@ async function renderPdf() {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
     const pending = [];
+    // Percentages keep masks aligned at any zoom.
+    const setHeight = (m, [y0, y1]) => {
+      m.style.top = `${(y0 / unit.height) * 100}%`;
+      m.style.height = `${((y1 - y0) / unit.height) * 100}%`;
+    };
     for (const { b, depth, pi, i, single } of byPage.get(n - 1) ?? []) {
       const m = document.createElement("div");
       m.className = "mask";
-      // Percentages keep masks aligned at any zoom. Word boxes stop short of
-      // descenders and comma tails, so pad them a little, mostly downwards.
+      // Glyphs can reach past their box: the hook of an f or an italic r
+      // overhangs to the right. A tenth of an em stays inside the word space.
       const h = b[4] - b[2];
-      const x0 = b[1] - 0.3, x1 = b[3] + 0.3, y0 = b[2] - 0.04 * h, y1 = b[4] + 0.16 * h;
+      const x0 = b[1] - 0.04 * h, x1 = b[3] + 0.1 * h;
       m.style.left = `${(x0 / unit.width) * 100}%`;
-      m.style.top = `${(y0 / unit.height) * 100}%`;
       m.style.width = `${((x1 - x0) / unit.width) * 100}%`;
-      m.style.height = `${((y1 - y0) / unit.height) * 100}%`;
+      setHeight(m, extent(b, null));  // refined below once the text runs are known
       overlay.append(m);
       const entry = { el: m, depth, pi, i, fix: null };
-      if (single) pending.push({ entry, b });
+      pending.push({ entry, b, single });
       state.masks.push(entry);
     }
     div.append(overlay);
@@ -617,8 +655,9 @@ async function renderPdf() {
       svg.setAttribute("viewBox", `0 0 ${unit.width} ${unit.height}`);
       svg.setAttribute("preserveAspectRatio", "none");
       overlay.append(svg);
-      for (const { entry, b } of pending) {
-        entry.fix = makeFix(svg, b, state.data.paragraphs[entry.pi].words[entry.i], items);
+      for (const { entry, b, single } of pending) {
+        setHeight(entry.el, extent(b, itemFor(b, items)));
+        if (single) entry.fix = makeFix(svg, b, state.data.paragraphs[entry.pi].words[entry.i], items);
       }
       applyPdf();
     }).catch((e) => console.error("page", n, e));
