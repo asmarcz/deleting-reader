@@ -115,7 +115,12 @@ def with_display(record):
     for p in record["paragraphs"]:
         p.pop("display", None)
         levels = [[i for i, d in enumerate(p["depth"]) if d >= k] for k in range(shorten.LEVELS + 1)]
-        p["display"] = [shorten.display_level(p["words"], level) for level in levels]
+        if record.get("kind") == "paper" and paper.is_math(" ".join(p["words"])):
+            # Formulas: the tidying would move a "?" or "." onto another
+            # symbol or capitalise one, so the kept symbols are shown as printed.
+            p["display"] = [[(i, p["words"][i]) for i in level] for level in levels]
+        else:
+            p["display"] = [shorten.display_level(p["words"], level) for level in levels]
     record["total"] = ledger.record_total(record)
     return record
 

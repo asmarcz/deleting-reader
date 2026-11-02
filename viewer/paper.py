@@ -27,6 +27,7 @@ import shutil
 import statistics
 import sys
 import time
+import unicodedata
 
 import pymupdf
 
@@ -68,6 +69,22 @@ def _font_stats(lines):
     if not chars:
         return None
     return statistics.mode(sizes), bold / chars
+
+
+MATH_LETTER_SHARE = 0.45
+
+
+def is_math(text):
+    """True for display math and formula-heavy blocks, which are shortened like
+    prose but shown without punctuation tidying (see server.with_display).
+
+    Prose is mostly ordinary letters (over half of its characters, even with
+    inline math); formulas are symbols, digits and mathematical italic letters
+    (𝑡, 𝜙: their own Unicode block), so they fall well below.
+    """
+    chars = [c for c in text if not c.isspace()]
+    letters = sum(1 for c in chars if unicodedata.category(c).startswith("L") and not 0x1D400 <= ord(c) <= 0x1D7FF)
+    return bool(chars) and letters / len(chars) < MATH_LETTER_SHARE
 
 
 def block_info(block):
