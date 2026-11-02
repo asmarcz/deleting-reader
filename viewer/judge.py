@@ -25,9 +25,12 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, HERE)
 import shorten  # noqa: E402
+import ledger  # noqa: E402
 
 JUDGE_DIR = os.path.join(HERE, "cache", "judge")
+MODEL, EFFORT = "claude-opus-5-5", "medium"
 
 SYSTEM = "You are a meticulous copy editor and fact checker. You answer with JSON only."
 
@@ -120,10 +123,49 @@ def item_key(model, effort, prompt):
     return hashlib.sha256(json.dumps([model, effort, SYSTEM, prompt]).encode()).hexdigest()[:16]
 
 
+def judge_record(record, model=MODEL, effort=EFFORT, batch=True, state_dir=None, progress=None):
+    """Verdict per paragraph of one result (None where the judge gave none).
+
+    Verdicts already in the cache are reused; new ones are cached and their
+    cost is written to the usage log.
+    """
+    keys, todo = [], {}
+    for original, versions in items(record):
+        prompt = prompt_for(original, versions)
+        key = item_key(model, effort, prompt)
+        keys.append(key)
+        if not os.path.exists(os.path.join(JUDGE_DIR, f"{key}.json")):
+            todo[key] = prompt
+    if todo:
+        client = shorten.make_client(model=model, effort=effort, batch=batch)
+        if progress:
+            client.progress = progress
+        os.makedirs(JUDGE_DIR, exist_ok=True)
+        verdicts = client.complete_json_many(todo, system=SYSTEM, schema=SCHEMA,
+                                             state_dir=state_dir or JUDGE_DIR)
+        save(verdicts)
+        ledger.add_client("judge", record["title"], client)
+    return [load(key) for key in keys]
+
+
+def save(verdicts):
+    for key, verdict in verdicts.items():
+        with open(os.path.join(JUDGE_DIR, f"{key}.json"), "w") as f:
+            json.dump(verdict, f, ensure_ascii=False)
+
+
+def load(key):
+    path = os.path.join(JUDGE_DIR, f"{key}.json")
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="claude-opus-5-5")
-    ap.add_argument("--effort", default="medium")
+    ap.add_argument("--model", default=MODEL)
+    ap.add_argument("--effort", default=EFFORT)
     ap.add_argument("--no-batch", action="store_true")
     ap.add_argument("--report", action="store_true", help="don't call the judge, only print the table")
     args = ap.parse_args()
@@ -144,13 +186,11 @@ def main():
         print(f"judging {len(keys)} items with {args.model} ({args.effort})", file=sys.stderr)
         verdicts = client.complete_json_many({k: todo[k] for k in keys}, system=SYSTEM, schema=SCHEMA,
                                              state_dir=JUDGE_DIR)
-        for key, verdict in verdicts.items():
-            with open(os.path.join(JUDGE_DIR, f"{key}.json"), "w") as f:
-                json.dump(verdict, f, ensure_ascii=False)
-        rate = (2, 10) if client.batch else (4, 20)  # Opus 5.5 $/MTok, halved in a batch
-        cost = (client.prompt_tokens * rate[0] + client.completion_tokens * rate[1]) / 1e6
+        save(verdicts)
+        ledger.add_client("judge", "judge.py run", client)
+        cost = shorten.cost(client.model, client.prompt_tokens, client.completion_tokens, client.batch)
         print(f"{client.calls} verdicts, {client.prompt_tokens} in / {client.completion_tokens} out tokens"
-              + (f", ≈ ${cost:.2f}" if args.model == "claude-opus-5-5" else ""), file=sys.stderr)
+              + (f", ≈ ${cost:.2f}" if cost is not None else ""), file=sys.stderr)
 
     # Table: per run and level, share of A/B/C sentences and unsupported claims.
     table, claims = {}, {}

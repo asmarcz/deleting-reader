@@ -12,15 +12,16 @@ they are kept up to level k. Longer runs are whole examples or clauses, which
 are legitimate cuts, and stay deleted.
 
 Keeping a word up to level k only raises its depth, so levels stay nested.
-Each repaired result is saved as a new run next to the original
-("variant": "repaired"), so the viewer and the judge can compare the two.
+For text results, each repaired result is saved as a new run next to the
+original ("variant": "repaired"), so the viewer and the judge can compare the
+two. Papers are judged and repaired as part of processing (viewer/paper.py)
+and keep only the final version.
 
-    uv run viewer/repair.py            # repair every judged result
+    uv run viewer/repair.py            # repair every judged text result
     uv run viewer/judge.py             # then judge the repaired paragraphs
 """
 import json
 import os
-import shutil
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -77,40 +78,39 @@ def repaired_id(rid):
     return f"{rid}-repaired"
 
 
+def repair_paragraphs(paragraphs, verdicts):
+    """Repaired paragraphs plus a log of (paragraph number, level, what, words).
+
+    verdicts has one entry per paragraph; None leaves that paragraph as it is.
+    """
+    new_paras, log = [], []
+    for n, (p, verdict) in enumerate(zip(paragraphs, verdicts), 1):
+        if verdict is None:
+            new_paras.append(p)
+            continue
+        depth, restored, unplaced = repair_paragraph(p, verdict)
+        new_paras.append({**p, "depth": depth})
+        log += [(n, k, "restored", t) for k, t in restored]
+        log += [(n, k, "quote not found", t) for k, t in unplaced]
+    return new_paras, log
+
+
 def main():
     done = 0
     for label, record in judge.runs():
-        if record.get("variant") == "repaired":
-            continue
-        new_paras, log, missing_verdicts = [], [], 0
-        for n, (p, (original, versions)) in enumerate(zip(record["paragraphs"], judge.items(record)), 1):
-            key = judge.item_key(JUDGE_MODEL, JUDGE_EFFORT, judge.prompt_for(original, versions))
-            path = os.path.join(judge.JUDGE_DIR, f"{key}.json")
-            if not os.path.exists(path):
-                missing_verdicts += 1
-                new_paras.append(p)
-                continue
-            with open(path) as f:
-                verdict = json.load(f)
-            depth, restored, unplaced = repair_paragraph(p, verdict)
-            new_paras.append({**p, "depth": depth})
-            log += [(n, k, "restored", t) for k, t in restored]
-            log += [(n, k, "quote not found", t) for k, t in unplaced]
-        if missing_verdicts == len(record["paragraphs"]):
+        if record.get("variant") == "repaired" or record.get("kind") == "paper":
+            continue  # papers are judged and repaired when they are processed
+        verdicts = [judge.load(judge.item_key(JUDGE_MODEL, JUDGE_EFFORT, judge.prompt_for(o, v)))
+                    for o, v in judge.items(record)]
+        missing_verdicts = verdicts.count(None)
+        if missing_verdicts == len(verdicts):
             continue  # never judged
+        new_paras, log = repair_paragraphs(record["paragraphs"], verdicts)
 
         rid = repaired_id(record["id"])
         out = {**record, "id": rid, "variant": "repaired", "repair_of": record["id"],
                "paragraphs": new_paras}
-        if record.get("kind") == "paper":
-            src = os.path.join(HERE, "papers", record["id"])
-            dst = os.path.join(HERE, "papers", rid)
-            os.makedirs(dst, exist_ok=True)
-            shutil.copyfile(os.path.join(src, "paper.pdf"), os.path.join(dst, "paper.pdf"))
-            target = os.path.join(dst, "result.json")
-        else:
-            target = os.path.join(HERE, "cache", f"{rid}.json")
-        with open(target, "w") as f:
+        with open(os.path.join(HERE, "cache", f"{rid}.json"), "w") as f:
             json.dump(out, f, ensure_ascii=False)
         done += 1
 

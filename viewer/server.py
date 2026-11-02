@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 import shorten  # noqa: E402
 import paper  # noqa: E402
+import ledger  # noqa: E402
 
 CACHE = os.path.join(HERE, "cache")
 PAPERS = paper.PAPERS
@@ -115,41 +116,21 @@ def with_display(record):
         p.pop("display", None)
         levels = [[i for i, d in enumerate(p["depth"]) if d >= k] for k in range(shorten.LEVELS + 1)]
         p["display"] = [shorten.display_level(p["words"], level) for level in levels]
-    record["cost"] = run_cost(record)
     return record
-
-
-def run_cost(record):
-    return shorten.cost(record["model"], record.get("input_tokens", 0),
-                        record.get("output_tokens", 0), record.get("batch", False))
 
 
 def summary(record):
     """Fields the result picker shows; variant is set on repaired runs."""
     out = {k: record[k] for k in ("id", "title", "model", "effort", "created")}
     out["variant"] = record.get("variant")
+    out["kind"] = record.get("kind")
     return out
 
 
 @app.get("/api/usage")
 def usage():
-    """Tokens and dollars over every stored run, text and PDF.
-
-    Repaired copies are skipped: they keep the original run's counts but made
-    no calls of their own. Judge calls are not recorded, so not included.
-    """
-    paths = glob.glob(os.path.join(CACHE, "*.json")) + glob.glob(os.path.join(PAPERS, "*", "result.json"))
-    total = {"runs": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0}
-    for path in paths:
-        with open(path) as f:
-            record = json.load(f)
-        if record.get("variant"):
-            continue
-        total["runs"] += 1
-        total["input_tokens"] += record.get("input_tokens", 0)
-        total["output_tokens"] += record.get("output_tokens", 0)
-        total["cost"] += run_cost(record) or 0.0
-    return jsonify(total)
+    """Tokens and dollars spent so far, shortening and judging (viewer/ledger.py)."""
+    return jsonify(ledger.totals())
 
 
 def listing(paths):
@@ -226,7 +207,9 @@ def process_text():
         try:
             out = shorten.shorten_article(paragraphs, title, client)
         except Exception as e:  # show the reason in the page instead of a bare 500
+            ledger.add_client("shorten", title, client)  # failed calls are paid for too
             return jsonify({"error": f"{type(e).__name__}: {e}"}), 502
+        ledger.add_client("shorten", title, client)
         record = {
             "id": rid, "title": title, "model": model, "effort": effort,
             "created": time.time(), "seconds": round(time.time() - start, 1),
@@ -269,7 +252,7 @@ def upload_paper():
     """Store an uploaded PDF and process it in the background.
 
     Returns the paper id and job state; the page polls /api/jobs/<id>. The
-    same PDF with the same settings maps to the same id, so a repeat upload
+    same PDF maps to the same id, so a repeat upload
     reuses the finished result, or the running job, or the saved batch.
     """
     f = request.files.get("pdf")
@@ -278,32 +261,30 @@ def upload_paper():
     data = f.read()
     if not data.startswith(b"%PDF"):
         return jsonify({"error": "That file isn't a PDF."}), 400
-    model = request.form.get("model") or "claude-sonnet-5-5"
-    effort = request.form.get("effort") or "medium"
     batch = request.form.get("batch", "1") == "1"
 
     stem = shorten.slugify(os.path.splitext(f.filename)[0])
     path = os.path.join(UPLOADS, f"{stem}-{hashlib.sha256(data).hexdigest()[:8]}.pdf")
     with open(path, "wb") as out:
         out.write(data)
-    pid = paper.paper_id(path, model, effort, f.filename)
+    pid = paper.paper_id(path, f.filename)
     if os.path.exists(os.path.join(PAPERS, pid, "result.json")):
         return jsonify({"id": pid, "state": "done", "message": "already processed"})
     with _guard:
         job = _jobs.get(pid)
         if not job or job["state"] == "error":
             job = _jobs[pid] = {"state": "running", "message": "starting", "name": f.filename}
-            threading.Thread(target=_run_paper, args=(pid, path, model, effort, batch, f.filename),
+            threading.Thread(target=_run_paper, args=(pid, path, batch, f.filename),
                              daemon=True).start()
     return jsonify({"id": pid, **job})
 
 
-def _run_paper(pid, path, model, effort, batch, name):
+def _run_paper(pid, path, batch, name):
     def progress(msg):
         _jobs[pid]["message"] = msg
 
     try:
-        paper.process(path, model, effort, batch=batch, name=name, progress=progress)
+        paper.process(path, batch=batch, name=name, progress=progress)
         _jobs[pid].update(state="done", message="done")
     except Exception as e:
         _jobs[pid].update(state="error", message=f"{type(e).__name__}: {e}")

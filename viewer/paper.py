@@ -5,17 +5,18 @@
 """Process a PDF paper for the viewer's PDF overlay.
 
 Extracts body paragraphs with their word boxes, groups them by section,
-shortens every section with shorten.py (as one Message Batch by default, with
-the abstract and section heading as context), and writes
-viewer/papers/<id>/{paper.pdf,result.json}. Titles, author blocks, captions,
-footnotes and the reference list are left out, so they stay untouched in the
-PDF.
+shortens every section with Sonnet 5.5 at medium effort (as one Message Batch
+by default, with the abstract and section heading as context), has the Opus
+judge check each paragraph, repairs the flagged spans (viewer/repair.py), and
+writes viewer/papers/<id>/{paper.pdf,result.json}. Only that final version is
+shown. Titles, author blocks, captions, footnotes and the reference list are
+left out, so they stay untouched in the PDF.
 
-    uv run viewer/paper.py ~/Downloads/paper.pdf                 # Sonnet 5.5 medium, batch
-    uv run viewer/paper.py paper.pdf --model claude-opus-5-5 --no-batch
+    uv run viewer/paper.py ~/Downloads/paper.pdf                 # batch
+    uv run viewer/paper.py paper.pdf --no-batch
     uv run viewer/paper.py paper.pdf --dry-run                   # extraction only
 
-Rerunning with the same PDF and settings reuses the saved batch or result.
+Rerunning with the same PDF reuses the saved batches or result.
 """
 import argparse
 import hashlib
@@ -31,9 +32,14 @@ import pymupdf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
+sys.path.insert(0, HERE)
 import shorten  # noqa: E402
+import judge  # noqa: E402
+import ledger  # noqa: E402
+import repair  # noqa: E402
 
 PAPERS = os.path.join(HERE, "papers")
+MODEL, EFFORT = "claude-sonnet-5-5", "medium"  # one run per paper, then the judge and repair
 
 SKIP_PREFIX = re.compile(
     r"^(CCS Concepts|Keywords|ACM Reference Format|Permission to make|©|Copyright|"
@@ -182,29 +188,61 @@ def doc_title(pdf_path, name=None):
     return title or os.path.splitext(name or os.path.basename(pdf_path))[0]
 
 
-def paper_id(pdf_path, model, effort, name=None):
-    """Readable id of a processed paper; same PDF, model, effort and prompt give the same id."""
+def paper_id(pdf_path, name=None):
+    """Readable id of a processed paper, e.g. "its-alive-what-a-live-object-environment-changes-1a2b3c4d".
+
+    The hash covers the PDF and everything that shapes the result (models,
+    prompts, repair rule), so changing any of them gives a new id.
+    """
     with open(pdf_path, "rb") as f:
         pdf_hash = hashlib.sha256(f.read()).hexdigest()
     digest = hashlib.sha256(json.dumps(
-        [pdf_hash, model, effort, shorten.PROMPT_TEMPLATE]).encode()).hexdigest()
-    return shorten.result_id(doc_title(pdf_path, name), model, effort, digest)
+        [pdf_hash, MODEL, EFFORT, shorten.PROMPT_TEMPLATE,
+         judge.MODEL, judge.EFFORT, judge.SYSTEM, judge.PROMPT, repair.MAX_RUN]).encode()).hexdigest()
+    return f"{shorten.slugify(doc_title(pdf_path, name))}-{digest[:8]}"
 
 
-def process(pdf_path, model="claude-sonnet-5-5", effort="medium", batch=True, name=None, progress=None):
-    """Extract, shorten and save a paper; returns its id. Reuses a finished result.
+def process(pdf_path, batch=True, name=None, progress=None):
+    """Shorten, judge and repair a paper; returns its id. Reuses finished steps.
 
+    Only the final, repaired version is kept as result.json. The shortened
+    draft is saved as draft.json, so an interrupted run can resume at the judge.
     name is the original file name (for the title when the PDF has none);
     progress, if given, is called with short status messages.
     """
     report = progress or (lambda msg: print(msg, file=sys.stderr))
-    pid = paper_id(pdf_path, model, effort, name)
+    pid = paper_id(pdf_path, name)
     out_dir = os.path.join(PAPERS, pid)
     result_path = os.path.join(out_dir, "result.json")
+    draft_path = os.path.join(out_dir, "draft.json")
     if os.path.exists(result_path):
         report("already processed")
         return pid
+    start = time.time()
 
+    if os.path.exists(draft_path):
+        with open(draft_path) as f:
+            draft = json.load(f)
+    else:
+        draft = shorten_paper(pdf_path, pid, out_dir, batch, name, report)
+        with open(draft_path, "w") as f:
+            json.dump(draft, f, ensure_ascii=False)
+
+    report("judging grammar and meaning")
+    verdicts = judge.judge_record(draft, batch=batch, state_dir=out_dir, progress=report)
+    report("repairing")
+    paragraphs, log = repair.repair_paragraphs(draft["paragraphs"], verdicts)
+    restored = sum(1 for entry in log if entry[2] == "restored")
+    record = {**draft, "paragraphs": paragraphs, "judge_model": judge.MODEL, "judge_effort": judge.EFFORT,
+              "restored": restored, "seconds": round(time.time() - start, 1)}
+    with open(result_path, "w") as f:
+        json.dump(record, f, ensure_ascii=False)
+    report(f"done: {restored} dropped word runs restored, {record['seconds']} s")
+    return pid
+
+
+def shorten_paper(pdf_path, pid, out_dir, batch, name, report):
+    """Extract the paper's paragraphs and shorten them; returns the draft record."""
     report("extracting text")
     title, abstract, sections, stats = extract(pdf_path, name)
     if not stats["paragraphs"]:
@@ -220,10 +258,10 @@ def process(pdf_path, model="claude-sonnet-5-5", effort="medium", batch=True, na
         doc_sections.append({"paragraphs": [" ".join(p["words"]) for p in s["paragraphs"]],
                              "context": context or None})
 
-    client = shorten.make_client(model=model, effort=effort, batch=batch)
+    client = shorten.make_client(model=MODEL, effort=EFFORT, batch=batch)
     client.progress = report
-    start = time.time()
     results = shorten.shorten_document(doc_sections, title, client, state_dir=out_dir)
+    ledger.add_client("shorten", title, client)
 
     paragraphs = []
     for s, sec in zip(results, sections):
@@ -234,25 +272,17 @@ def process(pdf_path, model="claude-sonnet-5-5", effort="medium", batch=True, na
                     depth[i] = k
             paragraphs.append({"section": sec["heading"], "words": p["words"],
                                "boxes": p["boxes"], "depth": depth})
-    record = {
+    return {
         "id": pid, "kind": "paper", "title": title, "source": name or os.path.basename(pdf_path),
-        "model": model, "effort": effort, "batch": batch,
-        "created": time.time(), "seconds": round(time.time() - start, 1),
+        "model": MODEL, "effort": EFFORT, "batch": batch, "created": time.time(),
         "calls": client.calls, "input_tokens": client.prompt_tokens,
         "output_tokens": client.completion_tokens, "paragraphs": paragraphs,
     }
-    with open(result_path, "w") as f:
-        json.dump(record, f, ensure_ascii=False)
-    report(f"done: {client.calls} requests, {client.prompt_tokens} in / "
-           f"{client.completion_tokens} out tokens, {record['seconds']} s")
-    return pid
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("pdf")
-    ap.add_argument("--model", default="claude-sonnet-5-5")
-    ap.add_argument("--effort", default="medium")
     ap.add_argument("--no-batch", action="store_true", help="send requests directly instead of as a batch")
     ap.add_argument("--dry-run", action="store_true", help="only print the extracted structure")
     args = ap.parse_args()
@@ -266,7 +296,7 @@ def main():
             for p in s["paragraphs"]:
                 print(f"    {len(p['words']):4} words: {' '.join(p['words'][:12])} …")
         return
-    pid = process(args.pdf, args.model, args.effort, batch=not args.no_batch)
+    pid = process(args.pdf, batch=not args.no_batch)
     print(os.path.join(PAPERS, pid, "result.json"))
 
 

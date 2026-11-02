@@ -178,6 +178,7 @@
   .zoom button { border: 1px solid var(--line); background: var(--bg); border-radius: 6px; min-width: 2rem; height: 2rem; cursor: pointer; }
   .zoom output { min-width: 3.25rem; text-align: center; font-variant-numeric: tabular-nums; color: var(--muted); }
   .hint { font-size: 12px; color: var(--muted); margin: auto 0 0; }
+  .form-note { font-size: 12px; color: var(--muted); margin: 0; }
 
   @media (max-width: 760px) {
     .brand { display: none; }
@@ -250,22 +251,7 @@
   </form>
   <form id="pdf-form" hidden>
     <label>PDF file <input type="file" name="pdf" accept="application/pdf,.pdf" required></label>
-    <div class="row">
-      <label>Model
-        <select name="model">
-          <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
-          <option value="claude-opus-5-5">Claude Opus 5.5</option>
-          <option value="claude-haiku-5-5">Claude Haiku 5.5</option>
-        </select>
-      </label>
-      <label>Effort
-        <select name="effort">
-          <option value="low">Low</option>
-          <option value="medium" selected>Medium</option>
-          <option value="high">High</option>
-        </select>
-      </label>
-    </div>
+    <p class="form-note">Shortened by Sonnet 5.5, then checked by an Opus 5.5 judge and repaired.</p>
     <label class="check"><input type="checkbox" name="batch" checked> Batch: half price, usually a few minutes</label>
     <div class="row"><button class="btn primary" type="submit">Upload and process</button></div>
   </form>
@@ -278,7 +264,7 @@
     <div class="info">
       <h1 id="title">Deleting Reader</h1>
       <div class="meta" id="meta"></div>
-      <div class="meta" id="usage" title="All stored runs, text and PDF. Judge calls and repaired copies are not counted."></div>
+      <div class="meta" id="usage" title="Everything spent so far: shortening and judging, text and PDF"></div>
     </div>
     <div class="seg" role="group" aria-label="Display mode">
       <button type="button" data-view="grey" aria-pressed="true">Grey</button>
@@ -366,7 +352,7 @@ function renderTicks() {
 }
 
 const count = (n) => n.toLocaleString("en-US");
-const dollars = (x) => (x == null ? "price unknown" : `$${x < 0.01 && x > 0 ? x.toFixed(4) : x.toFixed(2)}`);
+const dollars = (x) => `$${x.toFixed(2)}`;
 
 function renderInfo() {
   const d = state.data;
@@ -380,10 +366,6 @@ function renderInfo() {
   const parts = [
     `${d.model}${d.effort ? `, ${d.effort}` : ""}${d.batch ? ", batch" : ""}${d.variant ? `, ${d.variant}` : ""}`,
     `${d.paragraphs.length} paragraphs`,
-    `${d.calls} request${d.calls === 1 ? "" : "s"}`,
-    `${count(d.input_tokens)} in / ${count(d.output_tokens)} out tokens`,
-    // A repaired copy made no calls; the numbers are its original run's.
-    d.variant ? `${dollars(d.cost)} (original run)` : dollars(d.cost),
   ];
   $("meta").textContent = parts.join(" · ");
 }
@@ -392,7 +374,7 @@ async function renderUsage() {
   try {
     const u = await (await fetch("api/usage")).json();
     $("usage").textContent =
-      `All runs: ${u.runs} · ${count(u.input_tokens)} in / ${count(u.output_tokens)} out tokens · ${dollars(u.cost)}`;
+      `Total: ${count(u.input_tokens)} in / ${count(u.output_tokens)} out tokens · ${dollars(u.cost)}`;
   } catch {
     $("usage").textContent = "";
   }
@@ -727,7 +709,7 @@ async function loadPicker(tab) {
   for (const it of items) {
     const o = document.createElement("option");
     o.value = it.id;
-    o.textContent = `${it.title} — ${it.model.replace("claude-", "")}${it.effort ? ` ${it.effort}` : ""}${it.variant ? `, ${it.variant}` : ""}`;
+    o.textContent = it.kind === "paper" ? it.title : `${it.title} — ${it.model.replace("claude-", "")}${it.effort ? ` ${it.effort}` : ""}${it.variant ? `, ${it.variant}` : ""}`;
     sel.append(o);
   }
   sel.hidden = !items.length;
