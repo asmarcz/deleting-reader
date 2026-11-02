@@ -18,7 +18,6 @@ Each repaired result is saved as a new run next to the original
     uv run viewer/repair.py            # repair every judged result
     uv run viewer/judge.py             # then judge the repaired paragraphs
 """
-import hashlib
 import json
 import os
 import shutil
@@ -75,7 +74,7 @@ def repair_paragraph(p, verdict):
 
 
 def repaired_id(rid):
-    return hashlib.sha256(f"{rid}:repair:{MAX_RUN}".encode()).hexdigest()[:16]
+    return f"{rid}-repaired"
 
 
 def main():

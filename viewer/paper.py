@@ -116,7 +116,7 @@ def extract(pdf_path, name=None):
                               "y": min(w[3][2] for w in part), "height": page.rect.height,
                               "words": part})
     body_size = statistics.mode(all_sizes)
-    title = doc.metadata.get("title") or os.path.splitext(name or os.path.basename(pdf_path))[0]
+    title = doc_title(pdf_path, name)
 
     sections, current, abstract, stats = [], None, [], {"skipped": 0}
     stopped = False
@@ -175,12 +175,20 @@ def extract(pdf_path, name=None):
     return title, " ".join(abstract), sections, stats
 
 
-def paper_id(pdf_path, model, effort):
-    """Id of a processed paper: same PDF, model, effort and prompt give the same id."""
+def doc_title(pdf_path, name=None):
+    """The PDF's own title, else the file name without extension."""
+    with pymupdf.open(pdf_path) as doc:
+        title = doc.metadata.get("title")
+    return title or os.path.splitext(name or os.path.basename(pdf_path))[0]
+
+
+def paper_id(pdf_path, model, effort, name=None):
+    """Readable id of a processed paper; same PDF, model, effort and prompt give the same id."""
     with open(pdf_path, "rb") as f:
         pdf_hash = hashlib.sha256(f.read()).hexdigest()
-    return hashlib.sha256(json.dumps(
-        [pdf_hash, model, effort, shorten.PROMPT_TEMPLATE]).encode()).hexdigest()[:16]
+    digest = hashlib.sha256(json.dumps(
+        [pdf_hash, model, effort, shorten.PROMPT_TEMPLATE]).encode()).hexdigest()
+    return shorten.result_id(doc_title(pdf_path, name), model, effort, digest)
 
 
 def process(pdf_path, model="claude-sonnet-5-5", effort="medium", batch=True, name=None, progress=None):
@@ -190,7 +198,7 @@ def process(pdf_path, model="claude-sonnet-5-5", effort="medium", batch=True, na
     progress, if given, is called with short status messages.
     """
     report = progress or (lambda msg: print(msg, file=sys.stderr))
-    pid = paper_id(pdf_path, model, effort)
+    pid = paper_id(pdf_path, model, effort, name)
     out_dir = os.path.join(PAPERS, pid)
     result_path = os.path.join(out_dir, "result.json")
     if os.path.exists(result_path):

@@ -33,7 +33,7 @@ PAPERS = paper.PAPERS
 UPLOADS = os.path.join(HERE, "uploads")
 for d in (CACHE, PAPERS, UPLOADS):
     os.makedirs(d, exist_ok=True)
-_ID = re.compile(r"[0-9a-f]{16}")
+_ID = shorten.ID_PATTERN
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
@@ -132,9 +132,10 @@ def process_text():
     model = data.get("model") or "claude-sonnet-5-5"
     effort = data.get("effort") if model.startswith("claude-") else None
 
-    # The prompt is part of the key, so editing it invalidates old results.
-    rid = hashlib.sha256(json.dumps(
-        [title, paragraphs, model, effort, shorten.PROMPT_TEMPLATE]).encode()).hexdigest()[:16]
+    # The prompt is part of the digest, so editing it invalidates old results.
+    digest = hashlib.sha256(json.dumps(
+        [title, paragraphs, model, effort, shorten.PROMPT_TEMPLATE]).encode()).hexdigest()
+    rid = shorten.result_id(title, model, effort, digest)
     path = os.path.join(CACHE, f"{rid}.json")
     with _lock_for(rid):
         if os.path.exists(path):
@@ -200,10 +201,11 @@ def upload_paper():
     effort = request.form.get("effort") or "medium"
     batch = request.form.get("batch", "1") == "1"
 
-    path = os.path.join(UPLOADS, hashlib.sha256(data).hexdigest()[:16] + ".pdf")
+    stem = shorten.slugify(os.path.splitext(f.filename)[0])
+    path = os.path.join(UPLOADS, f"{stem}-{hashlib.sha256(data).hexdigest()[:8]}.pdf")
     with open(path, "wb") as out:
         out.write(data)
-    pid = paper.paper_id(path, model, effort)
+    pid = paper.paper_id(path, model, effort, f.filename)
     if os.path.exists(os.path.join(PAPERS, pid, "result.json")):
         return jsonify({"id": pid, "state": "done", "message": "already processed"})
     with _guard:

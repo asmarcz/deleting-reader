@@ -25,6 +25,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 
 import requests
 from dotenv import load_dotenv
@@ -79,6 +80,35 @@ RESPONSE_SCHEMA = {
 
 def _log(msg):
     print(msg, file=sys.stderr, flush=True)
+
+
+ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,120}")
+
+
+def slugify(text, limit=48):
+    """Lowercase ASCII words joined by hyphens, cut at a word boundary."""
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    words = re.findall(r"[a-z0-9]+", re.sub(r"['’]", "", text.lower()))
+    out = ""
+    for w in words:
+        if out and len(out) + 1 + len(w) > limit:
+            break
+        out = f"{out}-{w}" if out else w[:limit]
+    return out or "untitled"
+
+
+def result_id(title, model, effort, digest):
+    """Readable id for a cached result, e.g.
+    "why-night-trains-are-coming-back-to-europe-sonnet-5-5-medium-74cdacf6".
+
+    digest is a hash of everything that determines the result (text, model,
+    effort, prompt), so different inputs never share a name.
+    """
+    parts = [slugify(title), slugify(model.removeprefix("claude-"), 24)]
+    if effort:
+        parts.append(effort)
+    parts.append(digest[:8])
+    return "-".join(parts)
 
 
 class Client:
