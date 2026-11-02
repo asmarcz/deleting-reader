@@ -500,12 +500,33 @@ function extent(b, item) {
   return [top, bottom];
 }
 
-function makeFix(svg, b, word, items) {
+// The word's printed colour, read from the rendered page: the darkest pixel
+// in its box (anti-aliased edges are lighter mixes with the paper). Null when
+// the box is blank. Coloured text such as math or links keeps its colour.
+function inkColor(canvas, b, scale) {
+  const x = Math.floor(b[1] * scale), y = Math.floor(b[2] * scale);
+  const w = Math.ceil((b[3] - b[1]) * scale), h = Math.ceil((b[4] - b[2]) * scale);
+  if (w <= 0 || h <= 0) return null;
+  const data = canvas.getContext("2d").getImageData(x, y, w, h).data;
+  let best = null, darkest = 255 * 3 - 60;  // ignore near-white
+  for (let i = 0; i < data.length; i += 4) {
+    const sum = data[i] + data[i + 1] + data[i + 2];
+    if (data[i + 3] > 0 && sum < darkest) [best, darkest] = [i, sum];
+  }
+  return best === null ? null : `rgb(${data[best]}, ${data[best + 1]}, ${data[best + 2]})`;
+}
+
+function makeFix(svg, b, word, items, canvas, scale) {
   const item = itemFor(b, items);
   const g = document.createElementNS(SVG, "g");
   svg.append(g);
+  let color;  // read on first use: most words are never redrawn
   return {
     g, b, word, extent: extent(b, item),
+    get color() {
+      if (color === undefined) color = inkColor(canvas, b, scale);
+      return color;
+    },
     size: item?.size ?? (b[4] - b[2]) * 0.75,
     family: item ? `"${item.font}", ${FALLBACK_FONT}` : FALLBACK_FONT,
     baseline: item ? item.baseline : b[4] - (b[4] - b[2]) * 0.22,
@@ -544,6 +565,7 @@ function draw(fix, x, text, anchor = "start") {
   t.setAttribute("font-size", fix.size);
   t.setAttribute("text-anchor", anchor);
   t.style.fontFamily = fix.family;
+  if (fix.color) t.style.fill = fix.color;
   t.textContent = text;
   fix.g.append(t);
 }
@@ -665,7 +687,7 @@ async function renderPdf() {
       overlay.append(svg);
       for (const { entry, b, single } of pending) {
         setHeight(entry.el, extent(b, itemFor(b, items)));
-        if (single) entry.fix = makeFix(svg, b, state.data.paragraphs[entry.pi].words[entry.i], items);
+        if (single) entry.fix = makeFix(svg, b, state.data.paragraphs[entry.pi].words[entry.i], items, canvas, zoom * dpr);
       }
       applyPdf();
     }).catch((e) => console.error("page", n, e));
