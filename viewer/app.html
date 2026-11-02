@@ -75,7 +75,8 @@
   }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .btn:disabled { opacity: .6; cursor: progress; }
-  .job { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 18rem; }
+  .job { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 22rem; }
+  .job a { color: var(--accent); font-weight: 600; }
 
   /* Menu under the top bar */
   .menu {
@@ -179,7 +180,8 @@
   .hint { font-size: 12px; color: var(--muted); margin: auto 0 0; }
 
   @media (max-width: 760px) {
-    .brand, .job { display: none; }
+    .brand { display: none; }
+    .job { max-width: 9rem; }
     .top { gap: .5rem; padding: .5rem 16px; }
     .top select { max-width: 9rem; }
     .layout { grid-template-columns: 1fr; }
@@ -292,12 +294,22 @@
       <button type="button" id="zoom-fit">Fit</button>
     </div>
     <p class="hint" id="hint"></p>
+    <form method="post" action="/logout" id="logout" hidden><button class="btn" type="submit">Log out</button></form>
   </aside>
 </div>
 
 <script type="module">
 import * as pdfjs from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
 pdfjs.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+
+// With a password set on the server, an expired login answers API calls with
+// 401; send the reader to the login page instead of showing broken results.
+const rawFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+  const r = await rawFetch(...args);
+  if (r.status === 401) location.href = `/login?next=${encodeURIComponent(location.hash)}`;
+  return r;
+};
 
 const LEVELS = 4;
 const LABELS = ["Full text", "Level 1", "Level 2", "Level 3", "Core"];
@@ -800,6 +812,8 @@ $("pdf-form").addEventListener("submit", async (e) => {
   button.disabled = true;
   setStatus("Uploading…");
   try {
+    // Asked here because browsers only allow it in response to a click.
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
     const r = await fetch("api/papers", { method: "POST", body: form });
     const body = await r.json();
     if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
@@ -834,19 +848,47 @@ function watchJob(id) {
       return;
     }
     watching.delete(id);
+    const name = job.name ?? "PDF";
     if (job.state === "done") {
-      $("job").textContent = `${job.name ?? "PDF"}: ready`;
-      if (state.tab === "pdf") {
-        await loadPicker("pdf");
-        if (!state.data) await open("pdf", id);
-        else $("job").textContent = `${job.name ?? "PDF"}: ready, pick it from the list`;
+      if (state.tab === "pdf") await loadPicker("pdf");
+      if (state.tab === "pdf" && !state.data) {
+        $("job").textContent = `${name}: ready`;
+        await open("pdf", id);
+      } else {
+        showReady(name, id);
       }
+      notify(`${name} is ready`, "Open Deleting Reader to read it.");
     } else {
-      $("job").textContent = `${job.name ?? "PDF"}: failed`;
+      $("job").textContent = `${name}: failed`;
       setStatus(`Processing failed: ${job.message}`, true);
+      notify(`${name} failed`, job.message);
     }
   };
   tick();
+}
+
+// "name: ready · Open" in the top bar, for a paper that finished while
+// something else was open.
+function showReady(name, id) {
+  const box = $("job");
+  box.textContent = `${name}: ready · `;
+  const link = document.createElement("a");
+  link.href = `#pdf/${id}`;
+  link.textContent = "Open";
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    box.textContent = "";
+    if (state.tab === "pdf") open("pdf", id);
+    else setTab("pdf", id);
+  });
+  box.append(link);
+}
+
+// Browser notification, only when the page is in the background and the
+// reader allowed it (asked on the first upload).
+function notify(title, body) {
+  if (!document.hidden || !("Notification" in window) || Notification.permission !== "granted") return;
+  try { new Notification(title, { body }); } catch {}
 }
 
 // Wiring
@@ -868,6 +910,7 @@ setView(state.view);
 const [tab, id] = location.hash.slice(1).split("/");
 setTab(tab === "pdf" ? "pdf" : "text", id || null);
 fetch("api/jobs").then((r) => r.json()).then((jobs) => jobs.forEach((j) => watchJob(j.id)));
+fetch("api/config").then((r) => r.json()).then((c) => { $("logout").hidden = !c.auth; });
 </script>
 </body>
 </html>
