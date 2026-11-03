@@ -188,6 +188,9 @@
   .keep { display: grid; gap: .35rem; font-size: 13px; }
   .keep label.check { display: flex; align-items: center; gap: .45rem; cursor: pointer; }
   .keep input { margin: 0; accent-color: var(--accent); }
+  .export { display: flex; align-items: center; gap: .4rem; font-size: 13px; color: var(--muted); }
+  .export span { margin-right: auto; }
+  .export .btn { padding: .3rem .6rem; font-size: 13px; }
 
   @media (max-width: 760px) {
     .brand { display: none; }
@@ -292,6 +295,11 @@
     <div class="keep" role="group" aria-label="Always keep">
       <label class="check"><input type="checkbox" id="keep-refs"> Keep figure references</label>
       <label class="check"><input type="checkbox" id="keep-cites"> Keep citations</label>
+    </div>
+    <div class="export" role="group" aria-label="Export this view">
+      <span>Export</span>
+      <button type="button" class="btn" id="export-pdf">PDF</button>
+      <button type="button" class="btn" id="export-html">HTML</button>
     </div>
     <p class="hint" id="hint"></p>
     <form method="post" action="logout" id="logout" hidden><button class="btn" type="submit">Log out</button></form>
@@ -810,6 +818,17 @@ for (const [key, id] of [["refs", "keep-refs"], ["cites", "keep-cites"]]) {
   });
 }
 
+// Download the open result as shown: current level, mode and keep toggles.
+function exportAs(fmt) {
+  if (!state.data) return;
+  const params = new URLSearchParams({ level: state.level, view: state.view });
+  const on = Object.keys(state.keep).filter((k) => state.keep[k]);
+  if (on.length) params.set("keep", on.join(","));
+  location.assign(`${API[state.tab]}/${state.data.id}/export.${fmt}?${params}`);
+}
+$("export-pdf").addEventListener("click", () => exportAs("pdf"));
+$("export-html").addEventListener("click", () => exportAs("html"));
+
 async function loadPicker(tab) {
   const items = await (await fetch(API[tab])).json();
   const sel = $("picker");
@@ -838,6 +857,7 @@ async function setTab(tab, id = null) {
   $("new").textContent = tab === "text" ? "New text" : "Upload PDF";
   $("text-form").hidden = tab !== "text";
   $("pdf-form").hidden = tab !== "pdf";
+  $("export-html").hidden = tab !== "text";  // papers export as PDF only
   setStatus("");
   closeMenu();
   const items = await loadPicker(tab);

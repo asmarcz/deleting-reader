@@ -14,6 +14,7 @@ with the less important words removed.
 import glob
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
@@ -22,7 +23,7 @@ import threading
 import time
 from datetime import timedelta
 
-from flask import Flask, abort, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, abort, jsonify, redirect, request, send_file, send_from_directory, session
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -31,6 +32,7 @@ import shorten  # noqa: E402
 import paper  # noqa: E402
 import ledger  # noqa: E402
 import keep  # noqa: E402
+import export  # noqa: E402
 
 CACHE = os.path.join(HERE, "cache")
 PAPERS = paper.PAPERS
@@ -107,31 +109,15 @@ def _lock_for(key):
         return _locks.setdefault(key, threading.Lock())
 
 
-def with_display(record):
-    """Add each level's display text, computed from the stored word depths.
-
-    Not stored, so improvements to shorten.display_level reach old results
-    without calling the model again. Headings always stay, and with
-    ?keep=refs,cites so do figure references and citations (viewer/keep.py).
-    """
+def keep_args():
+    """The ?keep=refs,cites toggles of the current request."""
     wanted = set(request.args.get("keep", "").split(","))
-    keep.apply(record, keep_refs="refs" in wanted, keep_cites="cites" in wanted)
-    for p in record["paragraphs"]:
-        p.pop("display", None)
-        levels = [[i for i, d in enumerate(p["depth"]) if d >= k] for k in range(shorten.LEVELS + 1)]
-        if record.get("kind") == "paper" and paper.is_math(" ".join(p["words"])):
-            # Formulas: the tidying would move a "?" or "." onto another
-            # symbol or capitalise one, so the kept symbols are shown as printed.
-            p["display"] = [[(i, p["words"][i]) for i in level] for level in levels]
-        elif p.get("lead"):
-            # A merged heading is tidied on its own, or the sentence after it
-            # would pass its full stop to the heading's last word.
-            n = p["lead"]
-            p["display"] = [shorten.display_level(p["words"][:n], [i for i in level if i < n])
-                            + [(i + n, t) for i, t in shorten.display_level(p["words"][n:], [i - n for i in level if i >= n])]
-                            for level in levels]
-        else:
-            p["display"] = [shorten.display_level(p["words"], level) for level in levels]
+    return {"keep_refs": "refs" in wanted, "keep_cites": "cites" in wanted}
+
+
+def with_display(record):
+    """The record as the page needs it: kept words applied, level texts, cost."""
+    keep.prepare(record, **keep_args())
     record["total"] = ledger.record_total(record)
     return record
 
@@ -256,6 +242,51 @@ def paper_pdf(pid):
     if not _ID.fullmatch(pid) or not os.path.exists(os.path.join(PAPERS, pid, "paper.pdf")):
         abort(404)
     return send_from_directory(os.path.join(PAPERS, pid), "paper.pdf")
+
+
+# Export
+
+
+def export_args():
+    """Level and view of an export request, from ?level=0-4&view=grey|remove."""
+    try:
+        level = int(request.args.get("level", "0"))
+    except ValueError:
+        abort(400)
+    view = request.args.get("view", "grey")
+    if not 0 <= level <= shorten.LEVELS or view not in ("grey", "remove"):
+        abort(400)
+    return level, view
+
+
+def download(data, rid, level, view, ext, mimetype):
+    name = f"{rid}-{shorten.slugify(export.LABELS[level])}-{view}.{ext}"
+    return send_file(io.BytesIO(data), mimetype=mimetype, as_attachment=True, download_name=name)
+
+
+@app.get("/api/papers/<pid>/export.pdf")
+def export_paper(pid):
+    path = os.path.join(PAPERS, pid, "result.json")
+    if not _ID.fullmatch(pid) or not os.path.exists(path):
+        abort(404)
+    level, view = export_args()
+    with open(path) as f:
+        record = keep.prepare(json.load(f), **keep_args())
+    data = export.paper_pdf(record, os.path.join(PAPERS, pid, "paper.pdf"), level, view)
+    return download(data, pid, level, view, "pdf", "application/pdf")
+
+
+@app.get("/api/results/<rid>/export.<fmt>")
+def export_text(rid, fmt):
+    path = os.path.join(CACHE, f"{rid}.json")
+    if not _ID.fullmatch(rid) or not os.path.exists(path) or fmt not in ("html", "pdf"):
+        abort(404)
+    level, view = export_args()
+    with open(path) as f:
+        record = keep.prepare(json.load(f), **keep_args())
+    if fmt == "html":
+        return download(export.text_html(record, level, view).encode(), rid, level, view, "html", "text/html")
+    return download(export.text_pdf(record, level, view), rid, level, view, "pdf", "application/pdf")
 
 
 @app.post("/api/papers")
