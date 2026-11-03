@@ -55,6 +55,7 @@
   /* Top bar */
   .top {
     position: sticky; top: 0; z-index: 5;
+    min-width: 0;  /* a grid item; lets the job status shrink instead of widening the page */
     display: flex; align-items: center; gap: .75rem;
     padding: .55rem 1rem;
     background: var(--surface);
@@ -81,7 +82,11 @@
   }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .btn:disabled { opacity: .6; cursor: progress; }
-  .job { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 22rem; }
+  /* Job status: "name: message". It takes the free width of the bar; when
+     space runs out the paper name gives way first, then the message. */
+  .job { display: flex; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .job .name { overflow: hidden; text-overflow: ellipsis; flex-shrink: 100; min-width: 2.5em; }
+  .job .rest { overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
   .job a { color: var(--accent); font-weight: 600; }
 
   /* Menu under the top bar */
@@ -194,7 +199,6 @@
 
   @media (max-width: 760px) {
     .brand { display: none; }
-    .job { max-width: 9rem; }
     .top { gap: .5rem; padding: .5rem 16px; }
     .top select { max-width: 9rem; }
     .layout { grid-template-columns: 1fr; }
@@ -974,7 +978,7 @@ function watchJob(id) {
     const r = await fetch(`api/jobs/${id}`);
     const job = r.ok ? await r.json() : { state: "error", message: "job not found" };
     if (job.state === "running") {
-      $("job").textContent = `${job.name ?? "PDF"}: ${job.message}`;
+      setJob(job.name ?? "PDF", job.message);
       setTimeout(tick, 3000);
       return;
     }
@@ -983,14 +987,14 @@ function watchJob(id) {
     if (job.state === "done") {
       if (state.tab === "pdf") await loadPicker("pdf");
       if (state.tab === "pdf" && !state.data) {
-        $("job").textContent = `${name}: ready`;
+        setJob(name, "ready");
         await open("pdf", id);
       } else {
         showReady(name, id);
       }
       notify(`${name} is ready`, "Open Deleting Reader to read it.");
     } else {
-      $("job").textContent = `${name}: failed`;
+      setJob(name, "failed");
       setStatus(`Processing failed: ${job.message}`, true);
       notify(`${name} failed`, job.message);
     }
@@ -998,21 +1002,36 @@ function watchJob(id) {
   tick();
 }
 
+// Top bar status "name: message"; returns the message part, for a link.
+function setJob(name, message) {
+  const box = $("job");
+  const n = document.createElement("span");
+  n.className = "name";
+  n.textContent = name;
+  const rest = document.createElement("span");
+  rest.className = "rest";
+  rest.textContent = `: ${message}`;
+  box.replaceChildren(n, rest);
+  box.title = `${name}: ${message}`;
+  return rest;
+}
+
 // "name: ready · Open" in the top bar, for a paper that finished while
 // something else was open.
 function showReady(name, id) {
   const box = $("job");
-  box.textContent = `${name}: ready · `;
+  const rest = setJob(name, "ready · ");
   const link = document.createElement("a");
   link.href = `#pdf/${id}`;
   link.textContent = "Open";
   link.addEventListener("click", (e) => {
     e.preventDefault();
-    box.textContent = "";
+    box.replaceChildren();
+    box.title = "";
     if (state.tab === "pdf") open("pdf", id);
     else setTab("pdf", id);
   });
-  box.append(link);
+  rest.append(link);
 }
 
 // Browser notification, only when the page is in the background and the
