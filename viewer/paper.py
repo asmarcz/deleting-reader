@@ -94,7 +94,17 @@ def block_info(block):
     whole = _font_stats(block["lines"])
     if not whole:
         return None
-    return whole, _font_stats(block["lines"][:1])
+    # A heading can span several PyMuPDF lines on one visual line ("2.2" and
+    # "Set-Theoretic Interpretation" are separate lines in acmart PDFs), so
+    # the candidate heading is every leading bold line, not just the first.
+    lead = 1
+    while lead < min(4, len(block["lines"])):
+        stats = _font_stats(block["lines"][lead:lead + 1])
+        if not stats or stats[1] <= 0.6:
+            break
+        lead += 1
+    first = _font_stats(block["lines"][:lead])
+    return whole, (first[0], first[1], lead) if first else None
 
 
 def extract(pdf_path, name=None):
@@ -128,11 +138,12 @@ def extract(pdf_path, name=None):
             parts = [(ws, size, bold)]
             # Some PDFs (Typst, Word) put a heading in the same block as the
             # paragraph under it; split such a first line off.
-            head = [w for w in ws if w[0] == 0]
+            lead = first[2] if first else 1
+            head = [w for w in ws if w[0] < lead]
             if first and len(head) < len(ws) and (first[1] > 0.6 or first[0] > size + 0.5) \
                     and len(head) <= 12 and HEADING.match(" ".join(w[2] for w in head)):
-                rest = [w for w in ws if w[0] != 0]
-                parts = [(head, *first), (rest, size, bold)]
+                rest = [w for w in ws if w[0] >= lead]
+                parts = [(head, *first[:2]), (rest, size, bold)]
             for part, psize, pbold in parts:
                 all_sizes += [psize] * len(part)
                 pages.append({"page": pno, "size": psize, "bold": pbold,
