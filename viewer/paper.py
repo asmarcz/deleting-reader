@@ -43,7 +43,8 @@ PAPERS = os.path.join(HERE, "papers")
 MODEL, EFFORT = "claude-sonnet-5-5", "medium"  # one run per paper, then the judge and repair
 
 SKIP_PREFIX = re.compile(
-    r"^(CCS Concepts|Keywords|ACM Reference Format|Permission to make|©|Copyright|arXiv:"
+    r"^(CCS Concepts|Keywords|Categories and Subject Descriptors|General Terms|Index Terms"
+    r"|ACM Reference Format|Permission to make|©|Copyright|arXiv:"
     # Captions ("Figure 1: ...", "Fig. 2. ..."), not prose that starts with
     # a reference ("Figure 1 shows the pipeline ...").
     r"|(Figure|Fig\.|Table|Listing|Algorithm)\s*\d+[a-z]?\s*[.:])", re.I)
@@ -89,24 +90,63 @@ def is_math(text):
     return bool(chars) and letters / len(chars) < MATH_LETTER_SHARE
 
 
+# Metadata labels that start a new part when a PDF runs them into the
+# paragraph above (they are then dropped by SKIP_PREFIX).
+LABEL = re.compile(r"^(Categories and Subject Descriptors|General Terms|Keywords|Index Terms|CCS Concepts"
+                   r"|ACM Reference Format)\b", re.I)
+
+
 def block_info(block):
-    """(size, bold share) of a dict block, and of its first line alone."""
+    """(size, bold share) of a dict block, and per line: its (size, bold
+    share) or None, its text, and whether it starts in bold."""
     if any(line["dir"] != (1.0, 0.0) for line in block["lines"]):
         return None  # rotated text, e.g. the arXiv margin stamp
     whole = _font_stats(block["lines"])
     if not whole:
         return None
-    # A heading can span several PyMuPDF lines on one visual line ("2.2" and
-    # "Set-Theoretic Interpretation" are separate lines in acmart PDFs), so
-    # the candidate heading is every leading bold line, not just the first.
-    lead = 1
-    while lead < min(4, len(block["lines"])):
-        stats = _font_stats(block["lines"][lead:lead + 1])
-        if not stats or stats[1] <= 0.6:
-            break
-        lead += 1
-    first = _font_stats(block["lines"][:lead])
-    return whole, (first[0], first[1], lead) if first else None
+    lines = [(_font_stats([line]), "".join(s["text"] for s in line["spans"]).strip(),
+              bool(line["spans"]) and bool(line["spans"][0]["flags"] & 16))
+             for line in block["lines"]]
+    return whole, lines
+
+
+def split_block(ws, whole, lines):
+    """Split one PyMuPDF block into parts [(words, size, bold share)].
+
+    A block can hold more than a paragraph: PyMuPDF may return a whole column
+    as one block (the Immix paper's first column runs from "Abstract" through
+    the ACM metadata into "1. Introduction" and its text). A new part starts
+    at a heading, i.e. up to four consecutive bold or larger lines that read
+    like one (several PyMuPDF lines can make one visual line: "2.2" and
+    "Set-Theoretic Interpretation" in acmart), and at a metadata label.
+    """
+    size, bold = whole
+    by_line = {}
+    for w in ws:
+        by_line.setdefault(w[0], []).append(w)
+    parts, current, n, i = [], [], len(lines), 0
+
+    def flush():
+        if current:
+            parts.append((list(current), size, bold))
+            current.clear()
+
+    while i < n:
+        k = i
+        while k < min(n, i + 4) and lines[k][0] and (lines[k][0][1] > 0.6 or lines[k][0][0] > size + 0.5):
+            k += 1
+        head = [w for j in range(i, k) for w in by_line.get(j, [])]
+        if head and len(head) <= 12 and HEADING.match(" ".join(w[2] for w in head)):
+            flush()
+            parts.append((head, max(lines[j][0][0] for j in range(i, k)), min(lines[j][0][1] for j in range(i, k))))
+            i = k
+            continue
+        if i > 0 and lines[i][2] and LABEL.match(lines[i][1]):
+            flush()
+        current += by_line.get(i, [])
+        i += 1
+    flush()
+    return parts
 
 
 def extract(pdf_path, name=None):
@@ -135,18 +175,7 @@ def extract(pdf_path, name=None):
         for bno in sorted(by_block):
             if bno not in info:
                 continue
-            ws = sorted(by_block[bno])
-            (size, bold), first = info[bno]
-            parts = [(ws, size, bold)]
-            # Some PDFs (Typst, Word) put a heading in the same block as the
-            # paragraph under it; split such a first line off.
-            lead = first[2] if first else 1
-            head = [w for w in ws if w[0] < lead]
-            if first and len(head) < len(ws) and (first[1] > 0.6 or first[0] > size + 0.5) \
-                    and len(head) <= 12 and HEADING.match(" ".join(w[2] for w in head)):
-                rest = [w for w in ws if w[0] >= lead]
-                parts = [(head, *first[:2]), (rest, size, bold)]
-            for part, psize, pbold in parts:
+            for part, psize, pbold in split_block(sorted(by_block[bno]), *info[bno]):
                 all_sizes += [psize] * len(part)
                 pages.append({"page": pno, "size": psize, "bold": pbold,
                               "y": min(w[3][2] for w in part), "height": page.rect.height,
