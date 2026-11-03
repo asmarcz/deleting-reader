@@ -199,6 +199,7 @@
   /* Everything under the zoom; collapsible on phones (see the media query). */
   .more { display: contents; }
   .more-toggle { display: none; }
+  .zoom-row { display: contents; }  /* on phones, zoom and Options share a row */
 
   @media (max-width: 760px) {
     .brand { display: none; }
@@ -210,8 +211,9 @@
       border-left: 0; border-bottom: 1px solid var(--line); padding: .6rem 16px; gap: .5rem;
     }
     .rail .info, .hint, .ticks small { display: none; }
+    .zoom-row { display: flex; align-items: center; gap: .75rem; }
     .more-toggle {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; gap: .35rem; margin-left: auto;
       background: none; border: 0; padding: .1rem 0; font-size: 13px; color: var(--muted); cursor: pointer;
     }
     .more-toggle::after { content: "▾"; transition: transform .15s ease; }
@@ -301,13 +303,15 @@
       <input type="range" id="level" min="0" max="4" step="1" value="0" aria-label="Level" aria-valuetext="Full text">
       <ol class="ticks" id="ticks"></ol>
     </div>
-    <div class="zoom" id="zoom" role="group" aria-label="Page zoom" hidden>
-      <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
-      <output id="zoom-value">100%</output>
-      <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
-      <button type="button" id="zoom-fit">Fit</button>
+    <div class="zoom-row">
+      <div class="zoom" id="zoom" role="group" aria-label="Page zoom" hidden>
+        <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+        <output id="zoom-value">100%</output>
+        <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" id="zoom-fit">Fit</button>
+      </div>
+      <button type="button" class="more-toggle" id="more-toggle" aria-expanded="false" aria-controls="more">Options</button>
     </div>
-    <button type="button" class="more-toggle" id="more-toggle" aria-expanded="false" aria-controls="more">Options</button>
     <div class="more" id="more">
     <div class="keep" role="group" aria-label="Always keep">
       <label class="check"><input type="checkbox" id="keep-refs"> Keep figure references</label>
