@@ -788,17 +788,19 @@ async function open(tab, id) {
   }
 }
 
-// Re-fetch the open result after a keep toggle changed, without reloading the
-// PDF: only word depths and level texts change, so masks just take the new
-// depths and are reapplied.
+// After a keep toggle changed: fetch only the new word depths and level texts
+// (?slim=1) and merge them into the open result, without reloading the PDF;
+// masks take the new depths and are reapplied.
 async function refreshKeep() {
   const d = state.data;
   if (!d) return;
   const tab = state.tab;
-  const r = await fetch(`${API[tab]}/${d.id}${keepQuery()}`);
+  const query = keepQuery();
+  const r = await fetch(`${API[tab]}/${d.id}${query ? `${query}&` : "?"}slim=1`);
   if (!r.ok || state.data !== d) return;
-  const data = await r.json();
+  const slim = await r.json();
   if (state.data !== d) return;
+  const data = { ...d, paragraphs: d.paragraphs.map((p, n) => ({ ...p, ...slim.paragraphs[n] })) };
   state.data = data;
   renderTicks();
   if (tab === "text") {

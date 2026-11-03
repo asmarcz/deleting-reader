@@ -12,6 +12,7 @@ with the less important words removed.
     uv run viewer/server.py            # http://127.0.0.1:5050
 """
 import glob
+import gzip
 import hashlib
 import hmac
 import io
@@ -116,10 +117,32 @@ def keep_args():
 
 
 def with_display(record):
-    """The record as the page needs it: kept words applied, level texts, cost."""
+    """The record as the page needs it: kept words applied, level texts, cost.
+
+    With ?slim=1 only what a keep toggle changes: each paragraph's depths and
+    level texts. The page merges these into the result it has open, so a
+    toggle doesn't download every word and box again.
+    """
     keep.prepare(record, **keep_args())
+    if request.args.get("slim"):
+        return {"id": record["id"], "paragraphs": [{"depth": p["depth"], "display": p["display"]}
+                                                   for p in record["paragraphs"]]}
     record["total"] = ledger.record_total(record)
     return record
+
+
+@app.after_request
+def compress(response):
+    """Gzip JSON responses: results with word boxes run to megabytes."""
+    if (response.mimetype == "application/json" and not response.direct_passthrough
+            and "gzip" in request.headers.get("Accept-Encoding", "")
+            and "Content-Encoding" not in response.headers):
+        data = response.get_data()
+        if len(data) > 2048:
+            response.set_data(gzip.compress(data, compresslevel=5))
+            response.headers["Content-Encoding"] = "gzip"
+            response.headers["Vary"] = "Accept-Encoding"
+    return response
 
 
 def summary(record):
