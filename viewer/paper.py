@@ -43,8 +43,10 @@ PAPERS = os.path.join(HERE, "papers")
 MODEL, EFFORT = "claude-sonnet-5-5", "medium"  # one run per paper, then the judge and repair
 
 SKIP_PREFIX = re.compile(
-    r"^(CCS Concepts|Keywords|ACM Reference Format|Permission to make|©|Copyright|"
-    r"Figure \d|Fig\. \d|Table \d|Listing \d|arXiv:)", re.I)
+    r"^(CCS Concepts|Keywords|ACM Reference Format|Permission to make|©|Copyright|arXiv:"
+    # Captions ("Figure 1: ...", "Fig. 2. ..."), not prose that starts with
+    # a reference ("Figure 1 shows the pipeline ...").
+    r"|(Figure|Fig\.|Table|Listing|Algorithm)\s*\d+[a-z]?\s*[.:])", re.I)
 # Numbered headings ("3 Scenario", "4.2 Results", "A Appendix"), or the usual
 # unnumbered ones; anything else bold and short (code, run-in labels) is not a
 # section heading.
