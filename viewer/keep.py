@@ -85,8 +85,21 @@ def sentences(words):
     return out
 
 
+def first_line(p):
+    """Number of words on a paper paragraph's first visual line (0 if none)."""
+    boxes = p.get("boxes")
+    if not boxes:
+        return 0
+    first_y = boxes[0][0][2]
+    n = 0
+    while n < len(boxes) and abs(boxes[n][0][2] - first_y) < 2 and boxes[n][0][0] == boxes[0][0][0]:
+        n += 1
+    return n
+
+
 def heading_lead(p):
-    """Number of leading words of a paper paragraph that are a merged heading.
+    """Number of leading words of a paper paragraph that are a merged heading,
+    judged from the word boxes alone (styled_leads also reads the fonts).
 
     The words of the paragraph's first visual line count as a heading when
     they read like one (paper.HEADING), stand on their own line and take
@@ -95,10 +108,7 @@ def heading_lead(p):
     boxes = p.get("boxes")
     if not boxes or len(boxes) < 3:
         return 0
-    first_y = boxes[0][0][2]
-    n = 0
-    while n < len(boxes) and abs(boxes[n][0][2] - first_y) < 2 and boxes[n][0][0] == boxes[0][0][0]:
-        n += 1
+    n = first_line(p)
     if n >= len(boxes) or n > 12:
         return 0
     second = [b[0] for b in boxes[n:] if abs(b[0][2] - boxes[n][0][2]) < 2]
@@ -151,7 +161,7 @@ def styled_leads(record):
     doc = pymupdf.open(path)
     spans = {}
 
-    def styled(b):
+    def styled(b, flags=2 | 16):  # italic or bold by default
         if b[0] not in spans:
             spans[b[0]] = [s for blk in doc[b[0]].get_text("dict")["blocks"] for line in blk.get("lines", [])
                            for s in line["spans"] if s["text"].strip()]
@@ -159,11 +169,18 @@ def styled_leads(record):
         for s in spans[b[0]]:
             x0, y0, x1, y1 = s["bbox"]
             if x0 - 1 <= cx <= x1 + 1 and y0 - 1 <= cy <= y1 + 1:
-                return bool(s["flags"] & (2 | 16))  # italic or bold
+                return bool(s["flags"] & flags)
         return False
 
     leads = []
     for p in record["paragraphs"]:
+        # A numbered heading merged into the paragraph: its whole first line
+        # is bold, however long ("3.6 Patching Values Instead of Addresses").
+        line = first_line(p)
+        if (line and line < len(p["words"]) and paper.HEADING.match(" ".join(p["words"][:line]))
+                and all(styled(p["boxes"][i][0], 16) for i in range(line))):
+            leads.append(line)
+            continue
         n = 0
         for i, (w, boxes) in enumerate(zip(p["words"][:8], p["boxes"][:8])):
             if not styled(boxes[0]):
