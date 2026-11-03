@@ -196,6 +196,9 @@
   .export { display: flex; align-items: center; gap: .4rem; font-size: 13px; color: var(--muted); }
   .export span { margin-right: auto; }
   .export .btn { padding: .3rem .6rem; font-size: 13px; }
+  /* Everything under the zoom; collapsible on phones (see the media query). */
+  .more { display: contents; }
+  .more-toggle { display: none; }
 
   @media (max-width: 760px) {
     .brand { display: none; }
@@ -207,6 +210,14 @@
       border-left: 0; border-bottom: 1px solid var(--line); padding: .6rem 16px; gap: .5rem;
     }
     .rail .info, .hint, .ticks small { display: none; }
+    .more-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      background: none; border: 0; padding: .1rem 0; font-size: 13px; color: var(--muted); cursor: pointer;
+    }
+    .more-toggle::after { content: "▾"; transition: transform .15s ease; }
+    .more-toggle[aria-expanded="true"]::after { transform: rotate(180deg); }
+    .more { display: none; }
+    .more.open { display: grid; gap: .5rem; }
     .slider { height: auto; grid-template-columns: 1fr; }
     .slider input[type="range"] { writing-mode: horizontal-tb; width: 100%; height: 1.5rem; }
     .slider input[type="range"]::-moz-range-track {
@@ -296,6 +307,8 @@
       <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
       <button type="button" id="zoom-fit">Fit</button>
     </div>
+    <button type="button" class="more-toggle" id="more-toggle" aria-expanded="false" aria-controls="more">Options</button>
+    <div class="more" id="more">
     <div class="keep" role="group" aria-label="Always keep">
       <label class="check"><input type="checkbox" id="keep-refs"> Keep figure references</label>
       <label class="check"><input type="checkbox" id="keep-cites"> Keep citations</label>
@@ -307,6 +320,7 @@
     </div>
     <p class="hint" id="hint"></p>
     <form method="post" action="logout" id="logout" hidden><button class="btn" type="submit">Log out</button></form>
+    </div>
   </aside>
 </div>
 
@@ -832,6 +846,10 @@ function exportAs(fmt) {
   if (on.length) params.set("keep", on.join(","));
   location.assign(`${API[state.tab]}/${state.data.id}/export.${fmt}?${params}`);
 }
+$("more-toggle").addEventListener("click", (e) => {
+  const open = $("more").classList.toggle("open");
+  e.currentTarget.setAttribute("aria-expanded", String(open));
+});
 $("export-pdf").addEventListener("click", () => exportAs("pdf"));
 $("export-html").addEventListener("click", () => exportAs("html"));
 
