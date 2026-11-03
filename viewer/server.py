@@ -30,6 +30,7 @@ sys.path.insert(0, HERE)
 import shorten  # noqa: E402
 import paper  # noqa: E402
 import ledger  # noqa: E402
+import keep  # noqa: E402
 
 CACHE = os.path.join(HERE, "cache")
 PAPERS = paper.PAPERS
@@ -110,8 +111,11 @@ def with_display(record):
     """Add each level's display text, computed from the stored word depths.
 
     Not stored, so improvements to shorten.display_level reach old results
-    without calling the model again.
+    without calling the model again. Headings always stay, and with
+    ?keep=refs,cites so do figure references and citations (viewer/keep.py).
     """
+    wanted = set(request.args.get("keep", "").split(","))
+    keep.apply(record, keep_refs="refs" in wanted, keep_cites="cites" in wanted)
     for p in record["paragraphs"]:
         p.pop("display", None)
         levels = [[i for i, d in enumerate(p["depth"]) if d >= k] for k in range(shorten.LEVELS + 1)]
@@ -119,6 +123,13 @@ def with_display(record):
             # Formulas: the tidying would move a "?" or "." onto another
             # symbol or capitalise one, so the kept symbols are shown as printed.
             p["display"] = [[(i, p["words"][i]) for i in level] for level in levels]
+        elif p.get("lead"):
+            # A merged heading is tidied on its own, or the sentence after it
+            # would pass its full stop to the heading's last word.
+            n = p["lead"]
+            p["display"] = [shorten.display_level(p["words"][:n], [i for i in level if i < n])
+                            + [(i + n, t) for i, t in shorten.display_level(p["words"][n:], [i - n for i in level if i >= n])]
+                            for level in levels]
         else:
             p["display"] = [shorten.display_level(p["words"], level) for level in levels]
     record["total"] = ledger.record_total(record)
