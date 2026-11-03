@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Manage – Deleting Reader</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --surface: #ffffff; --ink: #1c1b19; --muted: #6b6860;
+    --line: #e1ded7; --accent: #2f5d50; --danger: #a3361f; --danger-ink: #ffffff;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --surface: #1f1e1b; --ink: #ecebe6; --muted: #9a978e;
+      --line: #34322d; --accent: #8cc1ac; --danger: #f08a73; --danger-ink: #1f0d08;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; padding: 2rem 16px; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 52rem; margin: 0 auto; }
+  h1 { font: 600 1.35rem/1.2 Georgia, "Iowan Old Style", serif; margin: 0 0 .25rem; }
+  h2 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 2rem 0 .5rem; }
+  .sub { color: var(--muted); margin: 0 0 1rem; }
+  a { color: var(--accent); }
+  ul { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  li { display: flex; align-items: center; gap: 1rem; padding: .65rem .9rem; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; }
+  .item { flex: 1; min-width: 0; }
+  .item a { color: var(--ink); text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item a:hover { text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  button {
+    font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 8px;
+    padding: .35rem .7rem; cursor: pointer; background: transparent; color: var(--danger);
+  }
+  button.confirm { background: var(--danger); border-color: var(--danger); color: var(--danger-ink); }
+  button:disabled { opacity: .6; cursor: progress; }
+  :is(a, button):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .empty { color: var(--muted); padding: .65rem .9rem; }
+  .error { color: var(--danger); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Manage</h1>
+  <p class="sub">Deleting removes the result for everyone; it can't be undone. <a href="./">Back to the reader</a></p>
+  <p class="error" id="error" role="alert" hidden></p>
+  <h2>Papers</h2>
+  <ul id="pdf"></ul>
+  <h2>Texts</h2>
+  <ul id="text"></ul>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const when = (t) => new Date(t * 1000).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+  function row(it) {
+    const li = document.createElement("li");
+    const item = document.createElement("div");
+    item.className = "item";
+    const link = document.createElement("a");
+    link.href = `./#${it.tab}/${it.id}`;
+    link.textContent = it.title || it.id;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = it.running ? "processing…"
+      : [it.model?.replace("claude-", ""), it.effort, it.variant, when(it.created)].filter(Boolean).join(" · ");
+    item.append(link, meta);
+    li.append(item);
+    if (!it.running) {
+      // First click arms the button, second deletes; it disarms after 4 s.
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "Delete";
+      let timer;
+      del.addEventListener("click", async () => {
+        if (!del.classList.contains("confirm")) {
+          del.classList.add("confirm");
+          del.textContent = "Delete for good";
+          timer = setTimeout(() => { del.classList.remove("confirm"); del.textContent = "Delete"; }, 4000);
+          return;
+        }
+        clearTimeout(timer);
+        del.disabled = true;
+        const r = await fetch(`api/manage/${it.tab}/${it.id}`, { method: "DELETE" });
+        if (r.ok) {
+          li.remove();
+          for (const list of [$("pdf"), $("text")]) if (!list.children.length) empty(list);
+        } else {
+          const body = await r.json().catch(() => ({}));
+          $("error").textContent = body.error || `Couldn't delete (HTTP ${r.status}).`;
+          $("error").hidden = false;
+          del.disabled = false;
+        }
+      });
+      li.append(del);
+    }
+    return li;
+  }
+
+  function empty(list) {
+    const li = document.createElement("li");
+    li.className = "empty";
+    li.textContent = "Nothing here.";
+    list.append(li);
+  }
+
+  (async () => {
+    const r = await fetch("api/manage");
+    if (r.status === 401) {
+      location.href = "login";
+      return;
+    }
+    const items = await r.json();
+    for (const tab of ["pdf", "text"]) {
+      const list = $(tab);
+      const mine = items.filter((it) => it.tab === tab);
+      if (mine.length) list.append(...mine.map(row));
+      else empty(list);
+    }
+  })();
+</script>
+</body>
+</html>

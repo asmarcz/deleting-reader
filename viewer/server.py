@@ -19,6 +19,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -160,6 +161,53 @@ def listing(paths):
             items.append(summary(json.load(f)))
     items.sort(key=lambda r: r["created"], reverse=True)
     return jsonify(items)
+
+
+# Manage page: unlisted (nothing links to it), at /manage, for deleting
+# results. Behind the login like everything else.
+
+
+@app.get("/manage")
+def manage_page():
+    return send_from_directory(HERE, "manage.html")
+
+
+@app.get("/api/manage")
+def manage_items():
+    items = []
+    for kind, paths in (("text", glob.glob(os.path.join(CACHE, "*.json"))),
+                        ("pdf", glob.glob(os.path.join(PAPERS, "*", "result.json")))):
+        for path in paths:
+            with open(path) as f:
+                items.append({**summary(json.load(f)), "tab": kind})
+    jobs = [{"id": pid, "tab": "pdf", "title": job.get("name"), "running": True}
+            for pid, job in list(_jobs.items()) if job["state"] == "running"]
+    items.sort(key=lambda r: r["created"], reverse=True)
+    return jsonify(jobs + items)
+
+
+@app.delete("/api/manage/<tab>/<rid>")
+def manage_delete(tab, rid):
+    """Delete a text result, or a paper with its folder (PDF, batches, draft).
+
+    The usage log keeps its lines, so what the result cost stays on record.
+    """
+    if not _ID.fullmatch(rid) or tab not in ("text", "pdf"):
+        abort(404)
+    if tab == "text":
+        path = os.path.join(CACHE, f"{rid}.json")
+        if not os.path.exists(path):
+            abort(404)
+        os.remove(path)
+    else:
+        if _jobs.get(rid, {}).get("state") == "running":
+            return jsonify({"error": "Still processing; delete it once it's done."}), 409
+        folder = os.path.join(PAPERS, rid)
+        if not os.path.isdir(folder):
+            abort(404)
+        shutil.rmtree(folder)
+        _jobs.pop(rid, None)
+    return jsonify({"deleted": rid})
 
 
 def depths(levels):
